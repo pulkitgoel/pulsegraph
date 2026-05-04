@@ -1,26 +1,38 @@
 # ⚡ PulseGraph
 
-PulseGraph is a chat-first architecture animation tool. It converts natural language descriptions or Mermaid code into high-fidelity, animated system diagrams with glowing data flows.
+PulseGraph is a premium, chat-first architecture animation tool. It converts natural language descriptions—or complex raw Mermaid code—into high-fidelity, animated system diagrams with glowing data flows, nested clustering, and interactive panning and zooming.
 
-## ✨ Features
+## ✨ Key Features
 
-- **Two-Pass LLM Pipeline**:
-  - **Pass 1 (Generate)**: Turns user intent into clean Mermaid flowchart syntax.
-  - **Pass 2 (Validate)**: Reviews and corrects logical gaps (e.g., adds missing return paths).
-- **Deterministic Mermaid Parser**: A pure TypeScript parser that maps Mermaid shapes to specific system components (Databases, Caches, Gateways, Users, etc.).
+- **Multi-Model AI Hub**:
+  - **Local (Privacy First)**: Fully offline support using **Ollama** (recommended: `gemma3:4b`). Keep your sensitive enterprise architectures completely on your local machine.
+  - **Cloud (High Capability)**: Support for **DeepSeek** cloud API for handling exceptionally complex logic.
+  - Features an intuitive UI toggle to switch between models seamlessly.
+  
+- **Universal Lexer Engine & AST Parser**:
+  - A robust, custom recursive parser that maps complex Mermaid syntax to a highly interactive UI.
+  - Supports **infinitely nested subgraphs**, HTML line breaks (`<br/>`), and various arrow pathings (e.g., dashed `-.->` paths).
+  - Built over Dagre's compound layout engine, ensuring parent groups precisely encapsulate their nested children without overlapping.
+
+- **Intelligent LLM Normalization**:
+  - **Two-Pass Pipeline**: Converts intent to raw syntax (Pass 1) and critically validates logical gaps (Pass 2).
+  - Regardless of user input (e.g., asking for a Sequence Diagram or Mindmap), the LLM dynamically translates the architecture into a sophisticated, beautifully routed flowchart optimized for the PulseGraph canvas.
+
+- **Interactive Glowing Canvas**:
+  - **Pan & Zoom**: Fluid drag-to-pan and scroll-to-zoom functionality, equipped with UI-based zoom controls (In, Out, Reset).
+  - **GSAP Animations**: Glowing pulse dots travel along SVG bezier paths to simulate live data flow across your system.
+
 - **Professional GIF Export**:
-  - **HD Resolution**: 1280×720 (720p) output.
-  - **Smooth Motion**: Uses quadratic bezier curves for edges and pulse animations.
-  - **Native Save**: Integrated with the browser's File System Access API for direct "Save As" functionality.
-- **Developer transparency**: Collapsible panel to view and copy the raw, validated Mermaid source.
+  - High Definition 1280×720 (720p) output.
+  - Offloaded to a Web Worker (`gifenc`) to prevent UI blocking while capturing smooth, animated motion.
+  - Native "Save As" capabilities via the File System Access API.
 
 ## 🛠 Tech Stack
 
 - **Frontend**: React 18, TypeScript, Vite
-- **Animations**: GSAP (MotionPathPlugin)
-- **Layout**: Dagre (Directed Graph Layout)
-- **AI**: DeepSeek (via `llmService.ts`)
-- **GIF Encoding**: `gifenc` (in a Web Worker)
+- **Animations & Layout**: GSAP (MotionPathPlugin), Dagre (Compound Graphs)
+- **AI Integration**: DeepSeek (Cloud), Ollama (Local)
+- **GIF Encoding**: `gifenc` (Web Worker)
 
 ## 🚀 Getting Started
 
@@ -35,12 +47,15 @@ cd PulseGraph
 npm install
 ```
 
-### 2. Configuration
+### 2. Configuration & Model Setup
 
-PulseGraph requires a **DeepSeek API Key**.
-- Launch the app (`npm run dev`).
-- Enter your API key in the configuration modal.
-- The key is stored locally in your browser (`localStorage`) and is only sent directly to the DeepSeek API.
+Upon launching the app, you will be prompted with the **Provider Configuration Hub**.
+
+*   **For Cloud (DeepSeek)**: Enter your API key. (Saved securely to your browser's `localStorage`).
+*   **For Local (Ollama)**: 
+    1. Install [Ollama](https://ollama.com/).
+    2. Pull the recommended model: `ollama pull gemma3:4b`.
+    3. Ensure CORS is enabled for web browser access by setting the environment variable `OLLAMA_ORIGINS="*"` before starting the Ollama server.
 
 ### 3. Development
 
@@ -57,7 +72,7 @@ npm run preview
 
 ## 📐 Node Type Mapping
 
-PulseGraph uses Mermaid shape syntax to automatically assign icons and styles:
+PulseGraph parses Mermaid shape syntax to automatically assign beautiful icons and styling rules:
 
 | Mermaid Syntax | Shape | Node Type |
 |---|---|---|
@@ -70,11 +85,11 @@ PulseGraph uses Mermaid shape syntax to automatically assign icons and styles:
 
 ## 📁 Project Structure
 
-- `src/services/llmService.ts`: Manages the two-pass generation/validation pipeline.
-- `src/parser/mermaidParser.ts`: The deterministic parser for Mermaid syntax.
-- `src/parser/layoutEngine.ts`: Calculates node/edge positions using Dagre.
-- `src/components/DiagramCanvas.tsx`: SVG renderer with GSAP-driven animations.
-- `src/services/gifWorker.ts`: High-resolution GIF encoding in a background thread.
+- `src/services/llmService.ts`: Manages multi-model routing, prompt normalization, and the validation pipeline.
+- `src/parser/mermaidParser.ts`: The recursive AST parser tracking deep subgraph nesting and syntactic edge cases.
+- `src/parser/layoutEngine.ts`: Calculates node, edge, and compound cluster bounds using Dagre.
+- `src/components/DiagramCanvas.tsx`: SVG renderer handling GSAP animations, panning, zooming, and dynamic encapsulation boxes.
+- `src/services/gifWorker.ts`: High-resolution GIF encoding worker thread.
 
 ## 📄 License
 
