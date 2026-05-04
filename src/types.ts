@@ -14,6 +14,8 @@ export interface GraphEdge {
 export interface GraphGroup {
   id: string; label: string; members: string[];
   color?: string; // e.g. "rgba(147,51,234,0.08)"
+  parentId?: string; // Support nested subgraphs
+  x?: number; y?: number; width?: number; height?: number;
 }
 export interface Graph {
   nodes: GraphNode[]; edges: GraphEdge[];
@@ -23,6 +25,8 @@ export interface ChatMessage {
   id: string; role: 'user' | 'assistant';
   content: string; timestamp: Date;
 }
+export type LlmProvider = 'deepseek' | 'ollama';
+
 export interface LLMResponse {
   message: string; graph?: Graph;
   isOffTopic?: boolean; error?: string;

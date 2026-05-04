@@ -1,7 +1,8 @@
-import type { Graph, ChatMessage, LLMResponse } from '../types';
+import type { Graph, ChatMessage, LlmProvider } from '../types';
 import { parseMermaid, looksLikeMermaid } from '../parser/mermaidParser';
 
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
+const OLLAMA_API_URL = 'http://localhost:11434/v1/chat/completions';
 
 // ── Pass 1 — Generate canonical Mermaid from user intent ─────────────────────
 const GENERATE_PROMPT = `You are a diagram architect. Convert the user's input into a valid Mermaid flowchart.
@@ -20,7 +21,8 @@ STRICT OUTPUT RULES:
 - Use subgraph blocks to group related components.
 - Use "flowchart LR" for most system diagrams.
 - Use "flowchart TD" for sequential flows (CI/CD, login steps).
-- If the user already provided Mermaid code, output it cleaned and improved.
+- ALWAYS convert to Flowcharts. If the user asks for a Mindmap, Sequence Diagram, Class Diagram, or Gantt chart, TRANSLATE their intent into a "flowchart TD" layout. Do NOT output "sequenceDiagram" or "mindmap".
+- If the user already provided Mermaid code, output it cleaned and improved as a flowchart.
 - If input is unrelated to diagrams: output exactly: OFFTOPIC`;
 
 // ── Pass 2 — Validate and correct the generated Mermaid ──────────────────────
@@ -43,23 +45,42 @@ OUTPUT RULES:
 async function callLLM(
   systemPrompt: string,
   userContent: string,
+  history: ChatMessage[],
   apiKey: string,
+  provider: LlmProvider,
   temperature = 0.1,
 ): Promise<string> {
-  const resp = await fetch(DEEPSEEK_API_URL, {
+  const url = provider === 'deepseek' ? DEEPSEEK_API_URL : OLLAMA_API_URL;
+  const model = provider === 'deepseek' ? 'deepseek-chat' : 'gemma3:4b';
+  
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (provider === 'deepseek') {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    ...history.slice(-4).map(m => ({ role: m.role, content: m.content })),
+    { role: 'user', content: userContent },
+  ];
+
+  const resp = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    headers,
     body: JSON.stringify({
-      model: 'deepseek-chat',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userContent },
-      ],
+      model,
+      messages,
       temperature,
       max_tokens: 2000,
     }),
   });
-  if (!resp.ok) throw new Error(`DeepSeek API ${resp.status}: ${await resp.text()}`);
+  
+  if (!resp.ok) {
+    const errorText = await resp.text();
+    const providerName = provider === 'deepseek' ? 'DeepSeek' : 'Ollama';
+    throw new Error(`${providerName} API ${resp.status}: ${errorText}`);
+  }
+  
   const data = await resp.json();
   const raw: string = data.choices[0]?.message?.content ?? '';
   // Strip markdown fences if LLM added them despite instructions
@@ -79,6 +100,7 @@ export async function sendMessage(
   history: ChatMessage[],
   currentGraph: Graph | null,
   apiKey: string,
+  provider: LlmProvider,
   onStep?: (step: 'generating' | 'validating' | 'rendering') => void,
 ): Promise<SendMessageResult> {
 
@@ -96,7 +118,7 @@ export async function sendMessage(
       ? `\n\nContext (current diagram Mermaid — refine it based on the request):\n${(currentGraph as Graph & { mermaidSource?: string }).mermaidSource ?? 'see graph JSON'}`
       : '';
     const pass1Input = userMessage + contextNote;
-    mermaidDraft = await callLLM(GENERATE_PROMPT, pass1Input, apiKey);
+    mermaidDraft = await callLLM(GENERATE_PROMPT, pass1Input, history, apiKey, provider);
   }
 
   // ── Off-topic guard ─────────────────────────────────────────────────────────
@@ -111,7 +133,7 @@ export async function sendMessage(
 
   // ── Pass 2 ─ Validate and correct ──────────────────────────────────────────
   onStep?.('validating');
-  const mermaidValidated = await callLLM(VALIDATE_PROMPT, mermaidDraft, apiKey, 0.05);
+  const mermaidValidated = await callLLM(VALIDATE_PROMPT, mermaidDraft, history, apiKey, provider, 0.05);
 
   // Strip any remaining fences
   const mermaidFinal = mermaidValidated

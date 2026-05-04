@@ -631,3 +631,86 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.3; }
 }
+
+/* ── Provider Tabs ── */
+.provider-tabs {
+  display: flex;
+  background: var(--surface-2);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.5rem;
+}
+.provider-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.5rem;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+.provider-tab.active {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+/* ── Ollama Info ── */
+.ollama-requirements {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+.ollama-requirements li {
+  font-size: 0.82rem;
+  color: var(--text);
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.ollama-requirements li::before { content: "•"; color: var(--accent); }
+.ollama-requirements code {
+  background: rgba(0,0,0,0.3);
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--accent);
+}
+
+/* ── Active Provider Indicator ── */
+.active-provider {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.03);
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.provider-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+/* ── Change Provider Button ── */
+.btn-change-provider {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.75rem;
+  margin-top: 1rem;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+.btn-change-provider:hover { color: var(--accent); }

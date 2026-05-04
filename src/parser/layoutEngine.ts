@@ -1,18 +1,40 @@
 import dagre from '@dagrejs/dagre';
-import type { Graph, GraphNode, GraphEdge } from '../types';
+import type { Graph, GraphNode, GraphEdge, GraphGroup } from '../types';
 
-const NODE_HEIGHT = 48;
+const NODE_HEIGHT = 52;
 const CHAR_PX = 7.2;
 const MIN_WIDTH = 130;
 const MAX_WIDTH = 240;
 const ICON_PAD = 38;
 
-export function getNodeWidth(label: string): number {
-  return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.ceil(label.length * CHAR_PX) + ICON_PAD));
+function getLabelLines(label: string, maxWidth: number): string[] {
+  if (label.includes('<br>') || label.includes('<br/>')) {
+    return label.replace(/<br\s*\/?>/g, '\n').split('\n').map(l => l.trim()).slice(0, 4);
+  }
+  const approxChars = Math.floor(maxWidth / CHAR_PX);
+  if (label.length <= approxChars) return [label];
+  const words = label.split(' ');
+  const lines: string[] = [];
+  let cur = '';
+  for (const w of words) {
+    if ((cur + ' ' + w).trim().length <= approxChars) cur = (cur + ' ' + w).trim();
+    else { if (cur) lines.push(cur); cur = w; }
+  }
+  if (cur) lines.push(cur);
+  return lines.slice(0, 3);
+}
+
+export function getNodeDimensions(label: string): { width: number; height: number } {
+  const lines = getLabelLines(label, MAX_WIDTH - ICON_PAD);
+  const maxLineLen = Math.max(...lines.map(l => l.length));
+  const width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.ceil(maxLineLen * CHAR_PX) + ICON_PAD));
+  const height = Math.max(NODE_HEIGHT, 30 + lines.length * 15);
+  return { width, height };
 }
 
 export function computeLayout(graph: Graph): Graph {
-  const g = new dagre.graphlib.Graph();
+  // Enable compound graph for subgraphs/clusters
+  const g = new dagre.graphlib.Graph({ compound: true });
   g.setDefaultEdgeLabel(() => ({}));
 
   const isVertical = (graph.layout || 'LR') === 'TB';
@@ -25,15 +47,35 @@ export function computeLayout(graph: Graph): Graph {
     edgesep: 30,
   });
 
-  const nodesWithSize: GraphNode[] = graph.nodes.map((n) => ({
-    ...n,
-    width: n.width || getNodeWidth(n.label),
-    height: n.height || NODE_HEIGHT,
-  }));
+  const nodesWithSize: GraphNode[] = graph.nodes.map((n) => {
+    const dim = getNodeDimensions(n.label);
+    return {
+      ...n,
+      width: n.width || dim.width,
+      height: n.height || dim.height,
+    };
+  });
 
   nodesWithSize.forEach((n) => {
     g.setNode(n.id, { width: n.width, height: n.height });
   });
+
+  // Tell dagre about the subgraphs to prevent overlap
+  if (graph.groups) {
+    graph.groups.forEach(grp => {
+      g.setNode(grp.id, { label: grp.label });
+      grp.members.forEach(memberId => {
+        if (g.hasNode(memberId)) {
+          g.setParent(memberId, grp.id);
+        }
+      });
+      // If this group is nested inside another, register it with dagre
+      if (grp.parentId) {
+        g.setParent(grp.id, grp.parentId);
+      }
+    });
+  }
+
 
   // Detect back-edges (cycles) via DFS so dagre only sees a DAG
   const visited = new Set<string>();
@@ -112,7 +154,18 @@ export function computeLayout(graph: Graph): Graph {
     }
   });
 
-  return { ...graph, nodes: positionedNodes, edges: positionedEdges };
+  const positionedGroups: GraphGroup[] = (graph.groups || []).map(grp => {
+    const nd = g.node(grp.id);
+    return {
+      ...grp,
+      x: nd?.x ?? 0,
+      y: nd?.y ?? 0,
+      width: nd?.width ?? 0,
+      height: nd?.height ?? 0
+    };
+  });
+
+  return { ...graph, nodes: positionedNodes, edges: positionedEdges, groups: positionedGroups };
 }
 
 export function getGraphDimensions(graph: Graph): { width: number; height: number } {

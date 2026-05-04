@@ -9,9 +9,7 @@ import type { Graph, GraphNode, GraphEdge, GraphGroup, NodeType } from '../types
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 let _edgeIdx = 0;
-let _nodeIdx = 0;
 function eid() { return `e_${++_edgeIdx}`; }
-function nid() { return `n_${++_nodeIdx}`; }
 
 /** Strip outer quotes from a string */
 function unquote(s: string) {
@@ -43,15 +41,6 @@ function shapeToType(open: string, close: string): NodeType {
 // Matches: ID[label], ID(label), ID{label}, ID[(label)], ID[/label/], ID((label))
 const NODE_DEF_RE =
   /^([A-Za-z0-9_]+)\s*(\[{1,2}\/|\[{1,2}\(?|>\[|\({1,2}|\{{1,2})(.*?)(\/{1,2}\]{1,2}|\){1,2}\]{0,2}|\){1,2}|\}{1,2}|\]{1,2})$/;
-
-// Matches an edge between two node defs or IDs:
-// A --> B, A -->|label| B, A -.-> B, A ==> B, A --text--> B
-const EDGE_RE =
-  /^([A-Za-z0-9_]+(?:\s*[\[(>{(]+.*?[\])})]+)?)\s*(={2,}|\.{2,}|-{2,})(?:\|([^|]*)\|)?\s*(>{0,2}-{0,2}\.{0,2}={0,2}>?)\s*\|?([^|]*)?\|?\s*([A-Za-z0-9_]+(?:\s*[\[(>{(]+.*?[\])})]+)?)$/;
-
-// Simpler edge pattern: nodeIdOrDef --label--> nodeIdOrDef
-const SIMPLE_EDGE_RE =
-  /^([\w]+(?:\s*[(\[{>][^\n]*?[)\]}])?)\s*(--+>|==+>|-.->|--+)\|?([^|]*)?\|?\s*-*>?\s*([\w]+(?:\s*[(\[{>][^\n]*?[)\]}])?)$/;
 
 // ── Parse a single "token" which may be ID[label] or just ID ─────────────────
 function parseNodeToken(
@@ -85,7 +74,6 @@ function parseNodeToken(
 // ── Main parse function ───────────────────────────────────────────────────────
 export function parseMermaid(mermaid: string): Graph {
   _edgeIdx = 0;
-  _nodeIdx = 0;
 
   const lines = mermaid
     .split('\n')
@@ -105,7 +93,7 @@ export function parseMermaid(mermaid: string): Graph {
   if (/flowchart\s+RL|graph\s+RL/i.test(firstLine)) layout = 'LR';
 
   // Track subgraph context
-  const subgraphStack: Array<{ id: string; label: string; members: Set<string> }> = [];
+  const subgraphStack: Array<{ id: string; label: string; members: Set<string>; parentId?: string }> = [];
 
   let i = 0;
   while (i < lines.length) {
@@ -118,11 +106,18 @@ export function parseMermaid(mermaid: string): Graph {
     if (line === '---') continue;
 
     // ── Subgraph start ──
-    const subStart = /^subgraph\s+(["']?)([^"'\n]+)\1\s*$/i.exec(line);
+    const subStart = /^subgraph\s+(?:([A-Za-z0-9_]+)\s*\[["']?(.*?)["']?\]|(["']?)([^"'\n]+)\3)\s*$/i.exec(line);
     if (subStart) {
-      const label = subStart[2].trim();
-      const id    = 'grp_' + label.toLowerCase().replace(/\W+/g, '_');
-      subgraphStack.push({ id, label, members: new Set() });
+      const label = (subStart[2] || subStart[4]).trim();
+      const rawId = subStart[1] || label;
+      const id    = 'grp_' + rawId.toLowerCase().replace(/\W+/g, '_');
+      
+      let parentId: string | undefined = undefined;
+      if (subgraphStack.length > 0) {
+        parentId = subgraphStack[subgraphStack.length - 1].id;
+      }
+      
+      subgraphStack.push({ id, label, members: new Set(), parentId });
       continue;
     }
 
@@ -143,6 +138,7 @@ export function parseMermaid(mermaid: string): Graph {
           label: grp.label,
           members: [...grp.members],
           color: groupColors[groups.length % groupColors.length],
+          parentId: grp.parentId,
         });
       }
       continue;
@@ -204,14 +200,14 @@ function parseEdgeLine(line: string, nodeMap: Map<string, GraphNode>): EdgeResul
   // Normalize line: remove leading/trailing whitespace
   const s = line.trim();
 
-  // Match arrow tokens: -->, ==>, -.->  --text--> etc.
-  // We split on the arrow core and extract optional label
-  const arrowRe = /^(.*?)\s*(={2,}>|\.{2}->|-{2,}>)\s*(.*)$/;
+  // Match arrow tokens: -->, ==>, -.->, ..-> etc.
+  const arrowRe = /^(.*?)\s*(={2,}>|\.{2,}>|-\.->|-{2,}>)\s*(.*)$/;
   let arrowMatch = arrowRe.exec(s);
   
   // Also handle labeled arrow: A -->|label| B
-  const labeledArrowRe = /^(.*?)\s*(={2,}>|\.{2}->|-{2,}>)\s*\|([^|]*)\|\s*(.*)$/;
+  const labeledArrowRe = /^(.*?)\s*(={2,}>|\.{2,}>|-\.->|-{2,}>)\s*\|([^|]*)\|\s*(.*)$/;
   const labeledMatch = labeledArrowRe.exec(s);
+
 
   if (labeledMatch) {
     const fromRaw = labeledMatch[1].trim();

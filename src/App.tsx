@@ -5,9 +5,11 @@ import { DiagramCanvas } from './components/DiagramCanvas';
 import { sendMessage } from './services/llmService';
 import { exportGif } from './services/gifExporter';
 import { computeLayout } from './parser/layoutEngine';
-import type { Graph, ChatMessage } from './types';
+import type { Graph, ChatMessage, LlmProvider } from './types';
 
 const STORAGE_KEY = 'pulsegraph_deepseek_key';
+const PROVIDER_KEY = 'pulsegraph_llm_provider';
+
 function getId() { return Math.random().toString(36).slice(2); }
 
 export type LoadingStep = 'generating' | 'validating' | 'rendering' | null;
@@ -21,6 +23,7 @@ const EXAMPLES = [
 
 export default function App() {
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem(STORAGE_KEY) ?? '');
+  const [provider, setProvider] = useState<LlmProvider>(() => (localStorage.getItem(PROVIDER_KEY) as LlmProvider) ?? 'deepseek');
   const [appState, setAppState] = useState<'idle' | 'active'>('idle');
   const [graph, setGraph] = useState<Graph | null>(null);
   const [mermaidSource, setMermaidSource] = useState('');
@@ -37,8 +40,19 @@ export default function App() {
 
   const canvasContainerRef = useRef<HTMLDivElement>(null);
 
-  const handleSaveKey = (key: string) => { localStorage.setItem(STORAGE_KEY, key); setApiKey(key); };
-  const handleResetKey = () => { localStorage.removeItem(STORAGE_KEY); setApiKey(''); };
+  const handleSaveConfig = (key: string, newProvider: LlmProvider) => {
+    localStorage.setItem(STORAGE_KEY, key);
+    localStorage.setItem(PROVIDER_KEY, newProvider);
+    setApiKey(key);
+    setProvider(newProvider);
+  };
+
+  const handleResetConfig = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(PROVIDER_KEY);
+    setApiKey('');
+    setProvider('deepseek');
+  };
 
   const submitMessage = useCallback(
     async (text: string) => {
@@ -54,7 +68,7 @@ export default function App() {
       setLoadingStep('generating');
 
       try {
-        const result = await sendMessage(userText, messages, graph, apiKey, (step) => setLoadingStep(step));
+        const result = await sendMessage(userText, messages, graph, apiKey, provider, (step) => setLoadingStep(step));
 
         const aiMsg: ChatMessage = {
           id: getId(),
@@ -79,7 +93,7 @@ export default function App() {
         setLoadingStep(null);
       }
     },
-    [apiKey, appState, graph, isLoading, messages]
+    [apiKey, provider, appState, graph, isLoading, messages]
   );
 
   const handleIdleSubmit = () => { if (input.trim()) submitMessage(input); };
@@ -121,7 +135,8 @@ export default function App() {
     });
   };
 
-  if (!apiKey) return <ApiKeyModal onSave={handleSaveKey} />;
+  const isConfigured = provider === 'ollama' || (provider === 'deepseek' && apiKey);
+  if (!isConfigured) return <ApiKeyModal onSave={handleSaveConfig} />;
 
   return (
     <div className={`app-layout ${appState}`}>
@@ -131,16 +146,22 @@ export default function App() {
           <span>⚡</span>
           <span>PulseGraph</span>
         </div>
-        {appState === 'active' && (
-          <div className="app-header-right">
-            {mermaidSource && (
-              <button className="btn-mermaid-toggle" onClick={() => setShowMermaid((v) => !v)}>
-                {showMermaid ? '▲ Hide Source' : '⟨/⟩ Mermaid Source'}
-              </button>
-            )}
-            <p className="app-tagline">AI-powered architecture animation</p>
+        <div className="app-header-right">
+          <div className="active-provider">
+            <span className="provider-dot" style={{ background: provider === 'deepseek' ? '#818CF8' : '#F472B6' }} />
+            {provider === 'deepseek' ? 'DeepSeek' : 'Local Ollama'}
           </div>
-        )}
+          {appState === 'active' && (
+            <>
+              {mermaidSource && (
+                <button className="btn-mermaid-toggle" onClick={() => setShowMermaid((v) => !v)}>
+                  {showMermaid ? '▲ Hide Source' : '⟨/⟩ Mermaid Source'}
+                </button>
+              )}
+              <p className="app-tagline">AI-powered architecture animation</p>
+            </>
+          )}
+        </div>
       </header>
 
       {/* ── Canvas ── */}
@@ -211,6 +232,9 @@ export default function App() {
               </button>
             ))}
           </div>
+          <button className="btn-change-provider" onClick={handleResetConfig}>
+            ⚙️ Change AI Model / Key
+          </button>
           {error && <p className="error-msg">{error}</p>}
         </div>
       )}
@@ -227,7 +251,7 @@ export default function App() {
           onExportGif={handleExport}
           isExporting={isExporting}
           exportProgress={exportProgress}
-          onResetKey={handleResetKey}
+          onResetKey={handleResetConfig}
         />
       )}
     </div>

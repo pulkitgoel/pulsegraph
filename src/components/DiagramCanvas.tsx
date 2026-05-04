@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import gsap from 'gsap';
 import { MotionPathPlugin } from 'gsap/MotionPathPlugin';
 import type { Graph, NodeType } from '../types';
@@ -56,6 +56,11 @@ function pointsToPath(points: { x: number; y: number }[]): string {
 }
 
 function wrapLabel(label: string, maxW: number): string[] {
+  // Support explicit line breaks from Mermaid
+  if (label.includes('<br>') || label.includes('<br/>')) {
+    return label.replace(/<br\s*\/?>/g, '\n').split('\n').map(l => l.trim()).slice(0, 4);
+  }
+
   const approxChars = Math.floor(maxW / 6.8);
   if (label.length <= approxChars) return [label];
   const words = label.split(' ');
@@ -66,15 +71,41 @@ function wrapLabel(label: string, maxW: number): string[] {
     else { if (cur) lines.push(cur); cur = w; }
   }
   if (cur) lines.push(cur);
-  return lines.slice(0, 2);
+  return lines.slice(0, 3); // Allow up to 3 lines
 }
 
 interface Props { graph: Graph; }
 
 export function DiagramCanvas({ graph }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const ctxRef = useRef<gsap.Context | null>(null);
+  
+  // Pan and Zoom state
+  const [scale, setScale] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStart = useRef({ x: 0, y: 0 });
+
   const { width, height } = getGraphDimensions(graph);
+
+  // Center the graph initially
+  useEffect(() => {
+    if (containerRef.current) {
+      const cw = containerRef.current.clientWidth;
+      const ch = containerRef.current.clientHeight;
+      // Calculate scale to fit with padding
+      const scaleX = (cw - 100) / width;
+      const scaleY = (ch - 100) / height;
+      const initialScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.3), 1.5); // Bound between 0.3x and 1.5x
+      
+      setScale(initialScale);
+      setPan({
+        x: (cw - width * initialScale) / 2,
+        y: (ch - height * initialScale) / 2
+      });
+    }
+  }, [width, height]);
 
   useEffect(() => {
     ctxRef.current?.revert();
@@ -94,113 +125,205 @@ export function DiagramCanvas({ graph }: Props) {
     return () => ctxRef.current?.revert();
   }, [graph]);
 
+  // Mouse event handlers for panning
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return; // Only left click
+    setIsDragging(true);
+    dragStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+  }, [pan]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isDragging) return;
+    setPan({
+      x: e.clientX - dragStart.current.x,
+      y: e.clientY - dragStart.current.y
+    });
+  }, [isDragging]);
+
+  const handleMouseUp = useCallback(() => setIsDragging(false), []);
+
+  // Wheel event handler for zooming
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    const zoomSensitivity = 0.001;
+    const delta = -e.deltaY * zoomSensitivity;
+    
+    setScale(prevScale => {
+      const newScale = Math.min(Math.max(prevScale + delta, 0.1), 3);
+      
+      // Keep mouse position fixed during zoom
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        setPan(prevPan => ({
+          x: mouseX - (mouseX - prevPan.x) * (newScale / prevScale),
+          y: mouseY - (mouseY - prevPan.y) * (newScale / prevScale)
+        }));
+      }
+      return newScale;
+    });
+  }, []);
+
+  const handleZoomIn = () => setScale(s => Math.min(s * 1.2, 3));
+  const handleZoomOut = () => setScale(s => Math.max(s / 1.2, 0.1));
+  const handleZoomReset = () => {
+    if (containerRef.current) {
+      const cw = containerRef.current.clientWidth;
+      const ch = containerRef.current.clientHeight;
+      const scaleX = (cw - 100) / width;
+      const scaleY = (ch - 100) / height;
+      const initialScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.3), 1.5);
+      setScale(initialScale);
+      setPan({ x: (cw - width * initialScale) / 2, y: (ch - height * initialScale) / 2 });
+    }
+  };
+
   return (
-    <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet"
-      style={{ width: '100%', height: '100%', display: 'block' }} xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <filter id="pg" x="-80%" y="-80%" width="260%" height="260%">
-          <feGaussianBlur stdDeviation="3.5" result="b"/>
-          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
-        <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-          <polygon points="0 0,8 3,0 6" fill="#334155"/>
-        </marker>
-        <marker id="arr-b" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-          <polygon points="0 0,8 3,0 6" fill="#6366F1"/>
-        </marker>
-      </defs>
+    <div 
+      ref={containerRef}
+      style={{ 
+        width: '100%', 
+        height: '100%', 
+        position: 'relative', 
+        overflow: 'hidden',
+        cursor: isDragging ? 'grabbing' : 'grab'
+      }}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+      onWheel={handleWheel}
+    >
+      {/* Zoom Controls */}
+      <div style={{
+        position: 'absolute',
+        top: '1rem',
+        right: '1rem',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '0.25rem',
+        zIndex: 10,
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: '8px',
+        padding: '4px'
+      }}>
+        <button onClick={handleZoomIn} className="btn-icon" title="Zoom In">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        </button>
+        <button onClick={handleZoomReset} className="btn-icon" title="Reset Zoom">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>
+        </button>
+        <button onClick={handleZoomOut} className="btn-icon" title="Zoom Out">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        </button>
+      </div>
 
-      {/* Dot grid */}
-      <pattern id="dotgrid" width="28" height="28" patternUnits="userSpaceOnUse">
-        <circle cx="1" cy="1" r="0.8" fill="#1E293B"/>
-      </pattern>
-      <rect width={width} height={height} fill="#090B10"/>
-      <rect width={width} height={height} fill="url(#dotgrid)"/>
+      <div style={{
+        transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+        transformOrigin: '0 0',
+        width: `${width}px`,
+        height: `${height}px`,
+        willChange: 'transform'
+      }}>
+        <svg ref={svgRef} width={width} height={height} style={{ display: 'block' }} xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="pg" x="-80%" y="-80%" width="260%" height="260%">
+              <feGaussianBlur stdDeviation="3.5" result="b"/>
+              <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <polygon points="0 0,8 3,0 6" fill="#334155"/>
+            </marker>
+            <marker id="arr-b" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <polygon points="0 0,8 3,0 6" fill="#6366F1"/>
+            </marker>
+          </defs>
 
-      {/* ── Groups (subgraph boxes) ── */}
-      {(graph.groups ?? []).map((grp) => {
-        const members = graph.nodes.filter((n) => grp.members.includes(n.id));
-        if (!members.length) return null;
-        const xs = members.map((n) => (n.x ?? 0) - (n.width ?? 140) / 2);
-        const xe = members.map((n) => (n.x ?? 0) + (n.width ?? 140) / 2);
-        const ys = members.map((n) => (n.y ?? 0) - (n.height ?? 52) / 2);
-        const ye = members.map((n) => (n.y ?? 0) + (n.height ?? 52) / 2);
-        const gx = Math.min(...xs) - 20, gy = Math.min(...ys) - 30;
-        const gw = Math.max(...xe) - Math.min(...xs) + 40, gh = Math.max(...ye) - Math.min(...ys) + 50;
-        return (
-          <g key={grp.id}>
-            <rect x={gx} y={gy} width={gw} height={gh} rx="10"
-              fill={grp.color ?? 'rgba(100,116,139,0.08)'}
-              stroke="rgba(255,255,255,0.12)" strokeWidth="1" strokeDasharray="4 3"/>
-            <text x={gx + 12} y={gy + 14} fill="rgba(255,255,255,0.4)"
-              fontSize="10" fontFamily="Inter, system-ui, sans-serif" fontWeight="600" letterSpacing="0.08em">
-              {grp.label}
-            </text>
-          </g>
-        );
-      })}
-
-      {/* ── Edges ── */}
-      {graph.edges.map((edge) => {
-        const d = pointsToPath(edge.points ?? []);
-        if (!d) return null;
-        const src = graph.nodes.find((n) => n.id === edge.from);
-        const dotColor = src ? NODE_STYLES[src.type].dot : '#00f2fe';
-        const mid = (edge.points ?? [])[ Math.floor((edge.points ?? []).length / 2) ];
-        return (
-          <g key={edge.id}>
-            <path id={`path-${edge.id}`} d={d} fill="none"
-              stroke={edge.isBackEdge ? '#4338CA' : '#1E293B'} strokeWidth="2"
-              strokeDasharray={edge.isBackEdge ? '5 4' : undefined}
-              markerEnd={edge.isBackEdge ? 'url(#arr-b)' : 'url(#arr)'}/>
-            {edge.label && mid && (
-              <g>
-                <rect x={mid.x - 42} y={mid.y - 9} width={84} height={16} rx="3" fill="#090B10" opacity="0.8"/>
-                <text x={mid.x} y={mid.y} fill={edge.isBackEdge ? '#818CF8' : '#475569'}
-                  fontSize="9.5" textAnchor="middle" dominantBaseline="middle"
-                  fontFamily="Inter, system-ui, sans-serif">{edge.label}</text>
+          {/* ── Groups (subgraph boxes) ── */}
+          {(graph.groups ?? []).map((grp) => {
+            // Use dagre's computed cluster dimensions (centered)
+            if (!grp.width || !grp.height) return null;
+            const gx = (grp.x ?? 0) - (grp.width / 2);
+            const gy = (grp.y ?? 0) - (grp.height / 2);
+            return (
+              <g key={grp.id}>
+                <rect x={gx} y={gy} width={grp.width} height={grp.height} rx="10"
+                  fill={grp.color ?? 'rgba(100,116,139,0.08)'}
+                  stroke="rgba(255,255,255,0.12)" strokeWidth="1" strokeDasharray="4 3"/>
+                <text x={gx + 12} y={gy + 14} fill="rgba(255,255,255,0.4)"
+                  fontSize="10" fontFamily="Inter, system-ui, sans-serif" fontWeight="600" letterSpacing="0.08em">
+                  {grp.label}
+                </text>
               </g>
-            )}
-            <circle id={`pulse-${edge.id}`} r="5" fill={dotColor} filter="url(#pg)" opacity="0"/>
-          </g>
-        );
-      })}
+            );
+          })}
 
-      {/* ── Nodes ── */}
-      {graph.nodes.map((node) => {
-        if (node.x === undefined || node.y === undefined) return null;
-        const st = NODE_STYLES[node.type] ?? NODE_STYLES.service;
-        const w = node.width ?? 140, h = node.height ?? 52;
-        const nx = node.x, ny = node.y;
-        const rx = nx - w / 2, ry = ny - h / 2;
-        const lines = wrapLabel(node.label, w - 36);
-        const lineH = 14;
-        const startY = h / 2 - ((lines.length - 1) * lineH) / 2;
-        return (
-          <g key={node.id} transform={`translate(${rx},${ry})`}>
-            {/* Outer glow rect */}
-            <rect x="-3" y="-3" width={w + 6} height={h + 6} rx="11" fill={st.border} opacity="0.07"/>
-            {/* Main box */}
-            <rect width={w} height={h} rx="8" fill={st.bg} stroke={st.border} strokeWidth="1.5"/>
-            {/* Icon — 16×16 viewport at left margin */}
-            <g transform={`translate(8, ${h / 2 - 8})`}>
-              <svg width="16" height="16" viewBox="0 0 16 16" overflow="visible">
-                <NodeIcon type={node.type} color={st.dot}/>
-              </svg>
-            </g>
-            {/* Label */}
-            {lines.map((line, li) => (
-              <text key={li}
-                x={w / 2 + 10}
-                y={startY + li * lineH}
-                fill="#E2E8F0" fontSize="11.5" fontWeight="500" textAnchor="middle"
-                dominantBaseline="middle" fontFamily="Inter, system-ui, sans-serif">
-                {line}
-              </text>
-            ))}
-          </g>
-        );
-      })}
-    </svg>
+          {/* ── Edges ── */}
+          {graph.edges.map((edge) => {
+            const d = pointsToPath(edge.points ?? []);
+            if (!d) return null;
+            const src = graph.nodes.find((n) => n.id === edge.from);
+            const dotColor = src ? NODE_STYLES[src.type].dot : '#00f2fe';
+            const mid = (edge.points ?? [])[ Math.floor((edge.points ?? []).length / 2) ];
+            return (
+              <g key={edge.id}>
+                <path id={`path-${edge.id}`} d={d} fill="none"
+                  stroke={edge.isBackEdge ? '#4338CA' : '#1E293B'} strokeWidth="2"
+                  strokeDasharray={edge.isBackEdge ? '5 4' : undefined}
+                  markerEnd={edge.isBackEdge ? 'url(#arr-b)' : 'url(#arr)'}/>
+                {edge.label && mid && (
+                  <g>
+                    <rect x={mid.x - 42} y={mid.y - 9} width={84} height={16} rx="3" fill="#090B10" opacity="0.8"/>
+                    <text x={mid.x} y={mid.y} fill={edge.isBackEdge ? '#818CF8' : '#475569'}
+                      fontSize="9.5" textAnchor="middle" dominantBaseline="middle"
+                      fontFamily="Inter, system-ui, sans-serif">{edge.label}</text>
+                  </g>
+                )}
+                <circle id={`pulse-${edge.id}`} r="5" fill={dotColor} filter="url(#pg)" opacity="0"/>
+              </g>
+            );
+          })}
+
+          {/* ── Nodes ── */}
+          {graph.nodes.map((node) => {
+            if (node.x === undefined || node.y === undefined) return null;
+            const st = NODE_STYLES[node.type] ?? NODE_STYLES.service;
+            const w = node.width ?? 140, h = node.height ?? 52;
+            const nx = node.x, ny = node.y;
+            const rx = nx - w / 2, ry = ny - h / 2;
+            const lines = wrapLabel(node.label, w - 36);
+            const lineH = 14;
+            const startY = h / 2 - ((lines.length - 1) * lineH) / 2;
+            return (
+              <g key={node.id} transform={`translate(${rx},${ry})`}>
+                {/* Outer glow rect */}
+                <rect x="-3" y="-3" width={w + 6} height={h + 6} rx="11" fill={st.border} opacity="0.07"/>
+                {/* Main box */}
+                <rect width={w} height={h} rx="8" fill={st.bg} stroke={st.border} strokeWidth="1.5"/>
+                {/* Icon — 16×16 viewport at left margin */}
+                <g transform={`translate(8, ${h / 2 - 8})`}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" overflow="visible">
+                    <NodeIcon type={node.type} color={st.dot}/>
+                  </svg>
+                </g>
+                {/* Label */}
+                {lines.map((line, li) => (
+                  <text key={li}
+                    x={w / 2 + 10}
+                    y={startY + li * lineH}
+                    fill="#E2E8F0" fontSize="11.5" fontWeight="500" textAnchor="middle"
+                    dominantBaseline="middle" fontFamily="Inter, system-ui, sans-serif">
+                    {line}
+                  </text>
+                ))}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
   );
 }
