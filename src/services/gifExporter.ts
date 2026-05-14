@@ -14,7 +14,7 @@ export function exportGif(
       { type: 'module' }
     );
 
-    worker.postMessage({ graph, width: 1280, height: 720, fps: 12, duration: 3 });
+    worker.postMessage({ graph, width: 1920, height: 1080, fps: 12, duration: 3 });
 
     worker.onmessage = (e) => {
       const msg = e.data as { type: string; pct?: number; buffer?: ArrayBuffer };

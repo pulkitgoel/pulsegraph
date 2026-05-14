@@ -136,9 +136,12 @@ function drawFrame(ctx: OffscreenCanvasRenderingContext2D, graph: Graph, t: numb
     ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1;
     roundRect(ctx, gx2, gy2, gw, gh, 10); ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,0.45)';
-    ctx.font = `${Math.round(10 / scale)}px Arial, sans-serif`;
+    ctx.save();
+    ctx.resetTransform();
+    ctx.font = `600 ${10 * scale}px Arial, sans-serif`;
     ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    ctx.fillText(g.label, gx2 + 10, gy2 + 8);
+    ctx.fillText(g.label, (gx2 + 10) * scale + offsetX, (gy2 + 8) * scale + offsetY);
+    ctx.restore();
   }
 
   // Edges — smooth quadratic bezier (identical to SVG pointsToPath in DiagramCanvas)
@@ -173,9 +176,12 @@ function drawFrame(ctx: OffscreenCanvasRenderingContext2D, graph: Graph, t: numb
     if (edge.label) {
       const mid = pts[Math.floor(pts.length / 2)];
       ctx.fillStyle = edge.isBackEdge ? '#818CF8' : '#64748B';
-      ctx.font = `9px Arial, sans-serif`;
+      ctx.save();
+      ctx.resetTransform();
+      ctx.font = `${9 * scale}px Arial, sans-serif`;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(edge.label, mid.x, mid.y - 10);
+      ctx.fillText(edge.label, mid.x * scale + offsetX, (mid.y - 10) * scale + offsetY);
+      ctx.restore();
     }
   }
 
@@ -186,16 +192,18 @@ function drawFrame(ctx: OffscreenCanvasRenderingContext2D, graph: Graph, t: numb
     const w = node.width ?? 140, h = node.height ?? 52;
     const nx = node.x, ny = node.y;
     const x = nx - w / 2, y = ny - h / 2;
-    ctx.fillStyle = style.bg;
+    ctx.fillStyle = node.color || style.bg;
     roundRect(ctx, x, y, w, h, 8); ctx.fill();
-    ctx.strokeStyle = style.border; ctx.lineWidth = 1.5;
+    ctx.strokeStyle = node.color ? 'rgba(255,255,255,0.2)' : style.border; ctx.lineWidth = 1.5;
     roundRect(ctx, x, y, w, h, 8); ctx.stroke();
     // Dot
     ctx.fillStyle = style.dot;
     ctx.beginPath(); ctx.arc(x + 13, ny, 4, 0, Math.PI * 2); ctx.fill();
     // Label
     ctx.fillStyle = '#E2E8F0';
-    ctx.font = `500 ${Math.round(11 / scale)}px Arial, sans-serif`;
+    ctx.save();
+    ctx.resetTransform();
+    ctx.font = `500 ${11.5 * scale}px Arial, sans-serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const maxW = w - 30;
     const words = node.label.split(' ');
@@ -204,12 +212,15 @@ function drawFrame(ctx: OffscreenCanvasRenderingContext2D, graph: Graph, t: numb
       if ((line1 + ' ' + word).trim().length * 6.5 < maxW) line1 = (line1 + ' ' + word).trim();
       else line2 = (line2 + ' ' + word).trim();
     }
+    const txtX = (x + w / 2 + 6) * scale + offsetX;
+    const maxWScaled = maxW * scale;
     if (line2) {
-      ctx.fillText(line1, x + w / 2 + 6, ny - 7, maxW);
-      ctx.fillText(line2, x + w / 2 + 6, ny + 7, maxW);
+      ctx.fillText(line1, txtX, (ny - 7) * scale + offsetY, maxWScaled);
+      ctx.fillText(line2, txtX, (ny + 7) * scale + offsetY, maxWScaled);
     } else {
-      ctx.fillText(line1, x + w / 2 + 6, ny, maxW);
+      ctx.fillText(line1, txtX, ny * scale + offsetY, maxWScaled);
     }
+    ctx.restore();
   }
 
   // Pulse dots — animate along smooth bezier expanded points
@@ -247,7 +258,7 @@ workerSelf.onmessage = (e: MessageEvent) => {
     drawFrame(ctx, graph, f / frames, width, height);
     const { data } = ctx.getImageData(0, 0, width, height);
     const u8 = new Uint8Array(data.buffer);
-    const palette = quantize(u8, 128);
+    const palette = quantize(u8, 256);
     const index = applyPalette(u8, palette);
     gif.writeFrame(index, width, height, { palette, delay });
     workerSelf.postMessage({ type: 'progress', pct: Math.round(((f + 1) / frames) * 100) });

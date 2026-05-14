@@ -1,4 +1,4 @@
-import type { Graph, ChatMessage, LlmProvider } from '../types';
+import type { Graph, ChatMessage, LlmProvider, OllamaModel } from '../types';
 import { parseMermaid, looksLikeMermaid } from '../parser/mermaidParser';
 
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
@@ -48,13 +48,17 @@ async function callLLM(
   history: ChatMessage[],
   apiKey: string,
   provider: LlmProvider,
+  ollamaModel: OllamaModel = 'gemma3:4b',
   temperature = 0.1,
 ): Promise<string> {
   const url = provider === 'deepseek' ? DEEPSEEK_API_URL : OLLAMA_API_URL;
-  const model = provider === 'deepseek' ? 'deepseek-chat' : 'gemma3:4b';
+  const model = provider === 'deepseek' ? 'deepseek-chat' : ollamaModel;
   
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (provider === 'deepseek') {
+    if (/[^\x00-\x7F]/.test(apiKey)) {
+      throw new Error('Your DeepSeek API key contains invalid characters (e.g. emojis or foreign text). Please click "Change AI Model / Key" below to reset it.');
+    }
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
@@ -101,6 +105,7 @@ export async function sendMessage(
   currentGraph: Graph | null,
   apiKey: string,
   provider: LlmProvider,
+  ollamaModel: OllamaModel = 'gemma3:4b',
   onStep?: (step: 'generating' | 'validating' | 'rendering') => void,
 ): Promise<SendMessageResult> {
 
@@ -118,7 +123,7 @@ export async function sendMessage(
       ? `\n\nContext (current diagram Mermaid — refine it based on the request):\n${(currentGraph as Graph & { mermaidSource?: string }).mermaidSource ?? 'see graph JSON'}`
       : '';
     const pass1Input = userMessage + contextNote;
-    mermaidDraft = await callLLM(GENERATE_PROMPT, pass1Input, history, apiKey, provider);
+    mermaidDraft = await callLLM(GENERATE_PROMPT, pass1Input, history, apiKey, provider, ollamaModel);
   }
 
   // ── Off-topic guard ─────────────────────────────────────────────────────────
@@ -133,7 +138,7 @@ export async function sendMessage(
 
   // ── Pass 2 ─ Validate and correct ──────────────────────────────────────────
   onStep?.('validating');
-  const mermaidValidated = await callLLM(VALIDATE_PROMPT, mermaidDraft, history, apiKey, provider, 0.05);
+  const mermaidValidated = await callLLM(VALIDATE_PROMPT, mermaidDraft, history, apiKey, provider, ollamaModel, 0.05);
 
   // Strip any remaining fences
   const mermaidFinal = mermaidValidated

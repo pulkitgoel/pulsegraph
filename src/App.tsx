@@ -1,14 +1,15 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { ChatPanel } from './components/ChatPanel';
 import { DiagramCanvas } from './components/DiagramCanvas';
 import { sendMessage } from './services/llmService';
 import { exportGif } from './services/gifExporter';
 import { computeLayout } from './parser/layoutEngine';
-import type { Graph, ChatMessage, LlmProvider } from './types';
+import type { Graph, ChatMessage, LlmProvider, OllamaModel } from './types';
 
 const STORAGE_KEY = 'pulsegraph_deepseek_key';
 const PROVIDER_KEY = 'pulsegraph_llm_provider';
+const OLLAMA_MODEL_KEY = 'pulsegraph_ollama_model';
 
 function getId() { return Math.random().toString(36).slice(2); }
 
@@ -24,12 +25,14 @@ const EXAMPLES = [
 export default function App() {
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem(STORAGE_KEY) ?? '');
   const [provider, setProvider] = useState<LlmProvider>(() => (localStorage.getItem(PROVIDER_KEY) as LlmProvider) ?? 'deepseek');
+  const [ollamaModel, setOllamaModel] = useState<OllamaModel>(() => (localStorage.getItem(OLLAMA_MODEL_KEY) as OllamaModel) ?? 'gemma3:4b');
   const [appState, setAppState] = useState<'idle' | 'active'>('idle');
   const [graph, setGraph] = useState<Graph | null>(null);
   const [mermaidSource, setMermaidSource] = useState('');
   const [showMermaid, setShowMermaid] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('pulsegraph_theme') as 'dark' | 'light') || 'dark');
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState<LoadingStep>(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -40,11 +43,13 @@ export default function App() {
 
   const canvasContainerRef = useRef<HTMLDivElement>(null);
 
-  const handleSaveConfig = (key: string, newProvider: LlmProvider) => {
+  const handleSaveConfig = (key: string, newProvider: LlmProvider, newOllamaModel?: OllamaModel) => {
     localStorage.setItem(STORAGE_KEY, key);
     localStorage.setItem(PROVIDER_KEY, newProvider);
+    if (newOllamaModel) localStorage.setItem(OLLAMA_MODEL_KEY, newOllamaModel);
     setApiKey(key);
     setProvider(newProvider);
+    if (newOllamaModel) setOllamaModel(newOllamaModel);
   };
 
   const handleResetConfig = () => {
@@ -53,6 +58,12 @@ export default function App() {
     setApiKey('');
     setProvider('deepseek');
   };
+
+  useEffect(() => {
+    if (theme === 'light') document.documentElement.classList.add('light');
+    else document.documentElement.classList.remove('light');
+    localStorage.setItem('pulsegraph_theme', theme);
+  }, [theme]);
 
   const submitMessage = useCallback(
     async (text: string) => {
@@ -68,7 +79,7 @@ export default function App() {
       setLoadingStep('generating');
 
       try {
-        const result = await sendMessage(userText, messages, graph, apiKey, provider, (step) => setLoadingStep(step));
+        const result = await sendMessage(userText, messages, graph, apiKey, provider, ollamaModel, (step) => setLoadingStep(step));
 
         const aiMsg: ChatMessage = {
           id: getId(),
@@ -93,7 +104,7 @@ export default function App() {
         setLoadingStep(null);
       }
     },
-    [apiKey, provider, appState, graph, isLoading, messages]
+    [apiKey, provider, ollamaModel, appState, graph, isLoading, messages]
   );
 
   const handleIdleSubmit = () => { if (input.trim()) submitMessage(input); };
@@ -147,6 +158,9 @@ export default function App() {
           <span>PulseGraph</span>
         </div>
         <div className="app-header-right">
+          <button className="btn-icon" onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} title="Toggle Theme" style={{ padding: '0.4rem', fontSize: '1.1rem', marginRight: '0.5rem' }}>
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
           <div className="active-provider">
             <span className="provider-dot" style={{ background: provider === 'deepseek' ? '#818CF8' : '#F472B6' }} />
             {provider === 'deepseek' ? 'DeepSeek' : 'Local Ollama'}
@@ -164,12 +178,29 @@ export default function App() {
         </div>
       </header>
 
-      {/* ── Canvas ── */}
+      <div className={`app-main ${appState}`}>
+        {/* ── Active chat panel (LEFT) ── */}
+        {appState === 'active' && (
+          <ChatPanel
+            messages={messages}
+            isLoading={isLoading}
+            loadingStep={loadingStep}
+            input={input}
+            onInputChange={setInput}
+            onSubmit={() => submitMessage(input)}
+            onExportGif={handleExport}
+            isExporting={isExporting}
+            exportProgress={exportProgress}
+            onResetKey={handleResetConfig}
+          />
+        )}
+
+        {/* ── Canvas (RIGHT) ── */}
       <div
         className={`canvas-section ${appState === 'active' ? 'canvas-section--visible' : ''}`}
         ref={canvasContainerRef}
       >
-        {graph && <DiagramCanvas graph={graph} />}
+        {graph && <DiagramCanvas graph={graph} theme={theme} />}
 
         {/* Mermaid source panel */}
         {showMermaid && mermaidSource && (
@@ -197,7 +228,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Idle hero ── */}
+        {/* ── Idle hero ── */}
       {appState === 'idle' && (
         <div className="idle-hero">
           <div className="idle-glow" />
@@ -238,22 +269,7 @@ export default function App() {
           {error && <p className="error-msg">{error}</p>}
         </div>
       )}
-
-      {/* ── Active chat panel ── */}
-      {appState === 'active' && (
-        <ChatPanel
-          messages={messages}
-          isLoading={isLoading}
-          loadingStep={loadingStep}
-          input={input}
-          onInputChange={setInput}
-          onSubmit={() => submitMessage(input)}
-          onExportGif={handleExport}
-          isExporting={isExporting}
-          exportProgress={exportProgress}
-          onResetKey={handleResetConfig}
-        />
-      )}
+      </div>
     </div>
   );
 }

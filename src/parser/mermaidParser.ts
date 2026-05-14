@@ -144,7 +144,21 @@ export function parseMermaid(mermaid: string): Graph {
       continue;
     }
 
-    // ── Style / classDef / class / linkStyle — skip ──
+    // ── Style / fill color parsing ──
+    const styleMatch = /^style\s+([A-Za-z0-9_]+)\s+(.*)$/i.exec(line);
+    if (styleMatch) {
+      const id = styleMatch[1];
+      const props = styleMatch[2];
+      const fillMatch = /fill:\s*(#[A-Fa-f0-9]{3,6}|[a-zA-Z]+)/.exec(props);
+      if (fillMatch) {
+        if (!nodeMap.has(id)) {
+          nodeMap.set(id, { id, label: id, type: 'service', width: 0, height: 0 });
+        }
+        nodeMap.get(id)!.color = fillMatch[1];
+      }
+      continue;
+    }
+
     if (/^(style|classDef|class|linkStyle)\s/i.test(line)) continue;
 
     // ── Edge line ──

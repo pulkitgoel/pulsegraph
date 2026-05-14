@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import type { LlmProvider } from '../types';
+import type { LlmProvider, OllamaModel } from '../types';
 
 interface Props {
-  onSave: (key: string, provider: LlmProvider) => void;
+  onSave: (key: string, provider: LlmProvider, ollamaModel?: OllamaModel) => void;
 }
 
 export const ApiKeyModal: React.FC<Props> = ({ onSave }) => {
   const [key, setKey] = useState('');
   const [provider, setProvider] = useState<LlmProvider>('deepseek');
+  const [ollamaModel, setOllamaModel] = useState<OllamaModel>('gemma3:4b');
   const [error, setError] = useState('');
 
   const handleSave = () => {
@@ -17,9 +18,13 @@ export const ApiKeyModal: React.FC<Props> = ({ onSave }) => {
         setError('Please enter your DeepSeek API key.');
         return;
       }
+      if (/[^\x00-\x7F]/.test(trimmed)) {
+        setError('API key must contain only valid characters (no emojis or foreign text).');
+        return;
+      }
       onSave(trimmed, 'deepseek');
     } else {
-      onSave('', 'ollama');
+      onSave('', 'ollama', ollamaModel);
     }
   };
 
@@ -79,9 +84,22 @@ export const ApiKeyModal: React.FC<Props> = ({ onSave }) => {
             </p>
             <ul className="ollama-requirements">
               <li>Ensure Ollama is running on <code>localhost:11434</code></li>
-              <li>Make sure <code>gemma3:4b</code> is installed (<code>ollama pull gemma3:4b</code>)</li>
+              <li>Make sure your selected model is installed (e.g. <code>ollama pull {ollamaModel}</code>)</li>
               <li>Enable CORS if running in a browser environment</li>
             </ul>
+            <div className="modal-field" style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+              <label htmlFor="ollama-model-select">Select Local Model</label>
+              <select
+                id="ollama-model-select"
+                value={ollamaModel}
+                onChange={(e) => setOllamaModel(e.target.value as OllamaModel)}
+                className="modal-select"
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}
+              >
+                <option value="gemma3:4b">gemma3:4b (Default)</option>
+                <option value="gemma4:e4b">gemma4:e4b</option>
+              </select>
+            </div>
             <p className="modal-note">
               Note: Local models may be slower than cloud APIs depending on your hardware.
             </p>

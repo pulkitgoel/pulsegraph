@@ -6,7 +6,7 @@ import { getGraphDimensions } from '../parser/layoutEngine';
 
 gsap.registerPlugin(MotionPathPlugin);
 
-const NODE_STYLES: Record<NodeType, { bg: string; border: string; dot: string }> = {
+const NODE_STYLES_DARK: Record<NodeType, { bg: string; border: string; dot: string }> = {
   user:         { bg: '#12093A', border: '#8B5CF6', dot: '#A78BFA' },
   client:       { bg: '#071428', border: '#3B82F6', dot: '#60A5FA' },
   gateway:      { bg: '#051C28', border: '#06B6D4', dot: '#22D3EE' },
@@ -17,6 +17,19 @@ const NODE_STYLES: Record<NodeType, { bg: string; border: string; dot: string }>
   queue:        { bg: '#1C0028', border: '#EC4899', dot: '#F472B6' },
   external:     { bg: '#111111', border: '#6B7280', dot: '#9CA3AF' },
 };
+
+const NODE_STYLES_LIGHT: Record<NodeType, { bg: string; border: string; dot: string }> = {
+  user:         { bg: '#F3E8FF', border: '#8B5CF6', dot: '#7C3AED' },
+  client:       { bg: '#EFF6FF', border: '#3B82F6', dot: '#2563EB' },
+  gateway:      { bg: '#ECFEFF', border: '#06B6D4', dot: '#0891B2' },
+  loadbalancer: { bg: '#ECFEFF', border: '#06B6D4', dot: '#0891B2' },
+  service:      { bg: '#ECFDF5', border: '#10B981', dot: '#059669' },
+  database:     { bg: '#FFFBEB', border: '#F59E0B', dot: '#D97706' },
+  cache:        { bg: '#FFF7ED', border: '#F97316', dot: '#EA580C' },
+  queue:        { bg: '#FDF2F8', border: '#EC4899', dot: '#DB2777' },
+  external:     { bg: '#F3F4F6', border: '#9CA3AF', dot: '#4B5563' },
+};
+
 
 /** Pure SVG icons — no emoji, fully cross-platform */
 function NodeIcon({ type, color }: { type: NodeType; color: string }) {
@@ -74,9 +87,11 @@ function wrapLabel(label: string, maxW: number): string[] {
   return lines.slice(0, 3); // Allow up to 3 lines
 }
 
-interface Props { graph: Graph; }
+interface Props { graph: Graph; theme?: 'dark' | 'light'; }
 
-export function DiagramCanvas({ graph }: Props) {
+export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
+  const isLight = theme === 'light';
+  const NODE_STYLES = isLight ? NODE_STYLES_LIGHT : NODE_STYLES_DARK;
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const ctxRef = useRef<gsap.Context | null>(null);
@@ -114,11 +129,21 @@ export function DiagramCanvas({ graph }: Props) {
         const pathEl = svgRef.current?.getElementById(`path-${edge.id}`);
         const pulseEl = svgRef.current?.getElementById(`pulse-${edge.id}`);
         if (!pathEl || !pulseEl) return;
+        const duration = 1.5 + (i % 5) * 0.28;
         gsap.set(pulseEl, { opacity: 0 });
         gsap.to(pulseEl, { opacity: 1, duration: 0.3, delay: i * 0.1 });
         gsap.to(pulseEl, {
-          duration: 1.5 + (i % 5) * 0.28, repeat: -1, ease: 'none', delay: i * 0.1,
+          duration: duration, repeat: -1, ease: 'none', delay: i * 0.1,
           motionPath: { path: pathEl as SVGPathElement, align: pathEl as SVGPathElement, alignOrigin: [0.5, 0.5] },
+          onRepeat: () => {
+            const glowEl = svgRef.current?.getElementById(`glow-${edge.to}`);
+            if (glowEl) {
+              gsap.fromTo(glowEl, 
+                { opacity: 0.8, scale: 1.05, transformOrigin: 'center' }, 
+                { opacity: 0.07, scale: 1, duration: 0.6, ease: 'power2.out', overwrite: 'auto' }
+              );
+            }
+          }
         });
       });
     }, svgRef);
@@ -143,17 +168,19 @@ export function DiagramCanvas({ graph }: Props) {
   const handleMouseUp = useCallback(() => setIsDragging(false), []);
 
   // Wheel event handler for zooming
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const zoomSensitivity = 0.001;
-    const delta = -e.deltaY * zoomSensitivity;
-    
-    setScale(prevScale => {
-      const newScale = Math.min(Math.max(prevScale + delta, 0.1), 3);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const handleWheelNative = (e: WheelEvent) => {
+      e.preventDefault();
+      // Trackpad deltas are small, mouse wheel deltas are large (~100). Adjust sensitivity.
+      const zoomSensitivity = Math.abs(e.deltaY) < 50 ? 0.005 : 0.0015;
+      const delta = -e.deltaY * zoomSensitivity;
       
-      // Keep mouse position fixed during zoom
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
+      setScale(prevScale => {
+        const newScale = Math.min(Math.max(prevScale + delta, 0.05), 4);
+        
+        const rect = el.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
         
@@ -161,9 +188,11 @@ export function DiagramCanvas({ graph }: Props) {
           x: mouseX - (mouseX - prevPan.x) * (newScale / prevScale),
           y: mouseY - (mouseY - prevPan.y) * (newScale / prevScale)
         }));
-      }
-      return newScale;
-    });
+        return newScale;
+      });
+    };
+    el.addEventListener('wheel', handleWheelNative, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheelNative);
   }, []);
 
   const handleZoomIn = () => setScale(s => Math.min(s * 1.2, 3));
@@ -194,7 +223,6 @@ export function DiagramCanvas({ graph }: Props) {
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
-      onWheel={handleWheel}
     >
       {/* Zoom Controls */}
       <div style={{
@@ -235,10 +263,10 @@ export function DiagramCanvas({ graph }: Props) {
               <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
             </filter>
             <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-              <polygon points="0 0,8 3,0 6" fill="#334155"/>
+              <polygon points="0 0,8 3,0 6" fill={isLight ? "#94A3B8" : "#334155"}/>
             </marker>
             <marker id="arr-b" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-              <polygon points="0 0,8 3,0 6" fill="#6366F1"/>
+              <polygon points="0 0,8 3,0 6" fill={isLight ? "#6366F1" : "#6366F1"}/>
             </marker>
           </defs>
 
@@ -251,9 +279,9 @@ export function DiagramCanvas({ graph }: Props) {
             return (
               <g key={grp.id}>
                 <rect x={gx} y={gy} width={grp.width} height={grp.height} rx="10"
-                  fill={grp.color ?? 'rgba(100,116,139,0.08)'}
-                  stroke="rgba(255,255,255,0.12)" strokeWidth="1" strokeDasharray="4 3"/>
-                <text x={gx + 12} y={gy + 14} fill="rgba(255,255,255,0.4)"
+                  fill={grp.color ?? (isLight ? 'rgba(241,245,249,0.5)' : 'rgba(100,116,139,0.08)')}
+                  stroke={isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.12)"} strokeWidth="1" strokeDasharray="4 3"/>
+                <text x={gx + 12} y={gy + 14} fill={isLight ? "rgba(71,85,105,0.7)" : "rgba(255,255,255,0.4)"}
                   fontSize="10" fontFamily="Inter, system-ui, sans-serif" fontWeight="600" letterSpacing="0.08em">
                   {grp.label}
                 </text>
@@ -271,13 +299,13 @@ export function DiagramCanvas({ graph }: Props) {
             return (
               <g key={edge.id}>
                 <path id={`path-${edge.id}`} d={d} fill="none"
-                  stroke={edge.isBackEdge ? '#4338CA' : '#1E293B'} strokeWidth="2"
+                  stroke={edge.isBackEdge ? (isLight ? '#6366F1' : '#4338CA') : (isLight ? '#CBD5E1' : '#1E293B')} strokeWidth="2"
                   strokeDasharray={edge.isBackEdge ? '5 4' : undefined}
                   markerEnd={edge.isBackEdge ? 'url(#arr-b)' : 'url(#arr)'}/>
                 {edge.label && mid && (
                   <g>
-                    <rect x={mid.x - 42} y={mid.y - 9} width={84} height={16} rx="3" fill="#090B10" opacity="0.8"/>
-                    <text x={mid.x} y={mid.y} fill={edge.isBackEdge ? '#818CF8' : '#475569'}
+                    <rect x={mid.x - 42} y={mid.y - 9} width={84} height={16} rx="3" fill={isLight ? '#FFFFFF' : '#090B10'} opacity={isLight ? "1" : "0.8"} stroke={isLight ? '#E2E8F0' : 'none'}/>
+                    <text x={mid.x} y={mid.y} fill={edge.isBackEdge ? (isLight ? '#4F46E5' : '#818CF8') : (isLight ? '#475569' : '#475569')}
                       fontSize="9.5" textAnchor="middle" dominantBaseline="middle"
                       fontFamily="Inter, system-ui, sans-serif">{edge.label}</text>
                   </g>
@@ -299,26 +327,28 @@ export function DiagramCanvas({ graph }: Props) {
             const startY = h / 2 - ((lines.length - 1) * lineH) / 2;
             return (
               <g key={node.id} transform={`translate(${rx},${ry})`}>
-                {/* Outer glow rect */}
-                <rect x="-3" y="-3" width={w + 6} height={h + 6} rx="11" fill={st.border} opacity="0.07"/>
-                {/* Main box */}
-                <rect width={w} height={h} rx="8" fill={st.bg} stroke={st.border} strokeWidth="1.5"/>
-                {/* Icon — 16×16 viewport at left margin */}
-                <g transform={`translate(8, ${h / 2 - 8})`}>
-                  <svg width="16" height="16" viewBox="0 0 16 16" overflow="visible">
-                    <NodeIcon type={node.type} color={st.dot}/>
-                  </svg>
+                <g className="node-group" style={{ transformOrigin: `${w / 2}px ${h / 2}px` }}>
+                  {/* Outer glow rect */}
+                  <rect id={`glow-${node.id}`} x="-3" y="-3" width={w + 6} height={h + 6} rx="11" fill={st.border} opacity="0.07"/>
+                  {/* Main box */}
+                  <rect width={w} height={h} rx="8" fill={node.color || st.bg} stroke={node.color ? 'rgba(255,255,255,0.2)' : st.border} strokeWidth="1.5"/>
+                  {/* Icon — 16×16 viewport at left margin */}
+                  <g transform={`translate(8, ${h / 2 - 8})`}>
+                    <svg width="16" height="16" viewBox="0 0 16 16" overflow="visible">
+                      <NodeIcon type={node.type} color={st.dot}/>
+                    </svg>
+                  </g>
+                  {/* Label */}
+                  {lines.map((line, li) => (
+                    <text key={li}
+                      x={w / 2 + 10}
+                      y={startY + li * lineH}
+                      fill={isLight ? "#334155" : "#E2E8F0"} fontSize="11.5" fontWeight="500" textAnchor="middle"
+                      dominantBaseline="middle" fontFamily="Inter, system-ui, sans-serif">
+                      {line}
+                    </text>
+                  ))}
                 </g>
-                {/* Label */}
-                {lines.map((line, li) => (
-                  <text key={li}
-                    x={w / 2 + 10}
-                    y={startY + li * lineH}
-                    fill="#E2E8F0" fontSize="11.5" fontWeight="500" textAnchor="middle"
-                    dominantBaseline="middle" fontFamily="Inter, system-ui, sans-serif">
-                    {line}
-                  </text>
-                ))}
               </g>
             );
           })}

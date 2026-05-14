@@ -5,6 +5,7 @@ export type NodeType =
 export interface GraphNode {
   id: string; label: string; type: NodeType;
   width: number; height: number; x?: number; y?: number;
+  color?: string; // HEX or CSS color
 }
 export interface GraphEdge {
   id: string; from: string; to: string; label?: string;
@@ -26,6 +27,7 @@ export interface ChatMessage {
   content: string; timestamp: Date;
 }
 export type LlmProvider = 'deepseek' | 'ollama';
+export type OllamaModel = 'gemma3:4b' | 'gemma4:e4b';
 
 export interface LLMResponse {
   message: string; graph?: Graph;

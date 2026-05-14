@@ -22,6 +22,19 @@
   color-scheme: dark;
 }
 
+html.light {
+  --bg:          #F8FAFC;
+  --surface:     #FFFFFF;
+  --surface-2:   #F1F5F9;
+  --border:      rgba(0,0,0,0.08);
+  --border-2:    rgba(0,0,0,0.15);
+  --text:        #334155;
+  --text-muted:  #64748B;
+  --text-bright: #0F172A;
+  --shadow:      0 10px 30px rgba(0,0,0,0.08);
+  color-scheme: light;
+}
+
 html, body, #root { height: 100%; }
 body { background: var(--bg); color: var(--text); overflow: hidden; }
 
@@ -32,7 +45,16 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  transition: all 0.65s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.app-main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  flex-direction: column;
+}
+.app-main.active {
+  flex-direction: row;
 }
 
 /* ── Header ── */
@@ -65,8 +87,9 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
 /* ── Canvas Section ── */
 .canvas-section {
   flex: 0;
-  height: 0;
+  flex-basis: 0;
   min-height: 0;
+  min-width: 0;
   opacity: 0;
   overflow: hidden;
   transition: flex 0.65s cubic-bezier(0.16, 1, 0.3, 1),
@@ -76,7 +99,7 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
 }
 .canvas-section--visible {
   flex: 1;
-  height: auto;
+  flex-basis: auto;
   opacity: 1;
   padding: 1.2rem 1.5rem 0.6rem;
 }
@@ -188,11 +211,12 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  height: 38vh;
-  min-height: 220px;
-  border-top: 1px solid var(--border);
+  width: 400px;
+  height: 100%;
+  border-right: 1px solid var(--border);
   background: var(--surface);
   overflow: hidden;
+  z-index: 10;
 }
 .chat-toolbar {
   display: flex;
@@ -296,7 +320,7 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
 /* ── Buttons ── */
 .btn-primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #090B10;
+  color: #FFFFFF;
   font-family: inherit;
   font-size: 0.9rem;
   font-weight: 600;
@@ -316,7 +340,7 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   border: none;
   border-radius: var(--radius-sm);
-  color: #090B10;
+  color: #FFFFFF;
   cursor: pointer;
   padding: 0.55rem 0.75rem;
   display: flex;
@@ -498,7 +522,7 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
   bottom: 1.5rem;
   left: 50%;
   transform: translateX(-50%);
-  background: #0F2218;
+  background: var(--surface);
   border: 1px solid #10B981;
   border-radius: 12px;
   padding: 0.75rem 1.2rem;
@@ -513,7 +537,7 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
 .gif-toast span { color: #E2E8F0; font-size: 0.9rem; }
 .gif-toast-btn {
   background: linear-gradient(135deg, #10B981, #34D399);
-  color: #052e16;
+  color: #FFFFFF;
   font-family: inherit;
   font-size: 0.85rem;
   font-weight: 600;
@@ -560,7 +584,7 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
   bottom: 0.75rem;
   right: 0.75rem;
   width: min(420px, 90%);
-  background: #0C1220;
+  background: var(--surface);
   border: 1px solid rgba(99,102,241,0.3);
   border-radius: 10px;
   overflow: hidden;
@@ -714,3 +738,12 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
   transition: color 0.2s;
 }
 .btn-change-provider:hover { color: var(--accent); }
+
+/* ── Diagram Canvas ── */
+.node-group {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  cursor: pointer;
+}
+.node-group:hover {
+  transform: scale(1.04);
+}
