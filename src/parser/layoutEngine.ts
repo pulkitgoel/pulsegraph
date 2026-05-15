@@ -4,30 +4,32 @@ import type { Graph, GraphNode, GraphEdge, GraphGroup } from '../types';
 const NODE_HEIGHT = 52;
 const CHAR_PX = 7.2;
 const MIN_WIDTH = 130;
-const MAX_WIDTH = 240;
+const MAX_WIDTH = 320;
 const ICON_PAD = 38;
 
 function getLabelLines(label: string, maxWidth: number): string[] {
   if (label.includes('<br>') || label.includes('<br/>')) {
-    return label.replace(/<br\s*\/?>/g, '\n').split('\n').map(l => l.trim()).slice(0, 4);
+    return label.replace(/<br\s*\/?>/g, '\n').split('\n').map(l => l.trim()).slice(0, 5);
   }
   const approxChars = Math.floor(maxWidth / CHAR_PX);
-  if (label.length <= approxChars) return [label];
+  const plainText = label.replace(/<[^>]+>/g, '');
+  if (plainText.length <= approxChars) return [label];
   const words = label.split(' ');
   const lines: string[] = [];
   let cur = '';
   for (const w of words) {
-    if ((cur + ' ' + w).trim().length <= approxChars) cur = (cur + ' ' + w).trim();
+    if ((cur + ' ' + w).replace(/<[^>]+>/g, '').trim().length <= approxChars) cur = (cur + ' ' + w).trim();
     else { if (cur) lines.push(cur); cur = w; }
   }
   if (cur) lines.push(cur);
-  return lines.slice(0, 3);
+  return lines.slice(0, 5);
 }
 
 export function getNodeDimensions(label: string): { width: number; height: number } {
   const lines = getLabelLines(label, MAX_WIDTH - ICON_PAD);
-  const maxLineLen = Math.max(...lines.map(l => l.length));
-  const width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.ceil(maxLineLen * CHAR_PX) + ICON_PAD));
+  const maxLineLen = Math.max(...lines.map(l => l.replace(/<[^>]+>/g, '').length));
+  // DO NOT cap at MAX_WIDTH. Allow box to expand if unbreakable words or <br> lines exceed it.
+  const width = Math.max(MIN_WIDTH, Math.ceil(maxLineLen * CHAR_PX) + ICON_PAD);
   const height = Math.max(NODE_HEIGHT, 30 + lines.length * 15);
   return { width, height };
 }

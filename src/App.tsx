@@ -93,8 +93,11 @@ export default function App() {
           const laid = computeLayout(result.graph);
           setGraph(laid);
           setMermaidSource(result.mermaidSource);
-          if (appState === 'idle') setAppState('active');
         }
+        
+        // Always switch to active state to show the chat panel for the response,
+        // even if it's an off-topic/validation message with no graph.
+        if (appState === 'idle') setAppState('active');
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Unknown error';
         setError(msg);
@@ -111,6 +114,9 @@ export default function App() {
 
   const handleExport = async () => {
     if (!graph) return;
+    const svgElement = document.getElementById('pulsegraph-svg');
+    if (!svgElement) return;
+
     let fileHandle: FileSystemFileHandle | null = null;
     if ('showSaveFilePicker' in window) {
       try {
@@ -124,7 +130,7 @@ export default function App() {
     }
     setIsExporting(true); setExportProgress(0); setGifUrl(null);
     try {
-      const url = await exportGif(graph, (pct) => setExportProgress(pct));
+      const url = await exportGif(svgElement, (pct) => setExportProgress(pct));
       if (fileHandle) {
         const blob = await fetch(url).then((r) => r.blob());
         URL.revokeObjectURL(url);

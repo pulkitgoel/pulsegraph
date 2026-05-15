@@ -113,7 +113,19 @@ export async function sendMessage(
   let mermaidDraft: string;
 
   if (looksLikeMermaid(userMessage)) {
-    // User already gave us Mermaid → skip Pass 1, validate directly
+    const lowerMessage = userMessage.trim().toLowerCase();
+    const unsupportedPrefixes = ['sequencediagram', 'statediagram', 'classdiagram', 'erdiagram', 'gantt', 'pie', 'journey', 'mindmap', 'gitgraph', 'quadrantchart', 'xychart'];
+    
+    if (unsupportedPrefixes.some(prefix => lowerMessage.startsWith(prefix))) {
+      return {
+        message: '❌ PulseGraph currently only supports **Flowcharts** and **Graphs** (e.g., `flowchart LR`). \n\nPlease convert your diagram to flowchart syntax, or describe your system in plain text so the AI can generate a supported diagram for you.',
+        graph: null,
+        mermaidSource: userMessage,
+        isOffTopic: true,
+      };
+    }
+
+    // User already gave us supported Mermaid → skip Pass 1, validate directly
     mermaidDraft = userMessage;
     onStep?.('validating');
   } else {

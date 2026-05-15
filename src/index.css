@@ -277,6 +277,8 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
   border-radius: var(--radius-sm);
   font-size: 0.87rem;
   line-height: 1.55;
+  word-break: break-word;
+  white-space: pre-wrap;
 }
 .chat-bubble--user .chat-bubble-content {
   background: rgba(79,172,254,0.12);

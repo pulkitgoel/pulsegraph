@@ -36,23 +36,23 @@ function NodeIcon({ type, color }: { type: NodeType; color: string }) {
   const s = { fill: 'none', stroke: color, strokeWidth: 1.4, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
   switch (type) {
     case 'user':
-      return <g><circle cx="8" cy="5.5" r="2.5" stroke={color} strokeWidth="1.4" fill="none"/><path d="M2 15 Q2 10 8 10 Q14 10 14 15" {...s}/></g>;
+      return <g className="icon-bounce"><circle cx="8" cy="5.5" r="2.5" stroke={color} strokeWidth="1.4" fill="none"/><path d="M2 15 Q2 10 8 10 Q14 10 14 15" {...s}/></g>;
     case 'client':
-      return <g><rect x="2" y="4" width="12" height="8" rx="1.5" {...s}/><line x1="1" y1="12" x2="15" y2="12" stroke={color} strokeWidth="1.4"/><line x1="6" y1="12" x2="10" y2="14" stroke={color} strokeWidth="1.4"/></g>;
+      return <g className="icon-bounce"><rect x="2" y="4" width="12" height="8" rx="1.5" {...s}/><line x1="1" y1="12" x2="15" y2="12" stroke={color} strokeWidth="1.4"/><line x1="6" y1="12" x2="10" y2="14" stroke={color} strokeWidth="1.4"/></g>;
     case 'gateway':
-      return <g><path d="M8 1.5L14.5 8L8 14.5L1.5 8Z" {...s}/><line x1="8" y1="5" x2="8" y2="11" stroke={color} strokeWidth="1.4"/><line x1="5" y1="8" x2="11" y2="8" stroke={color} strokeWidth="1.4"/></g>;
+      return <g className="icon-pulse"><path d="M8 1.5L14.5 8L8 14.5L1.5 8Z" {...s}/><line x1="8" y1="5" x2="8" y2="11" stroke={color} strokeWidth="1.4"/><line x1="5" y1="8" x2="11" y2="8" stroke={color} strokeWidth="1.4"/></g>;
     case 'loadbalancer':
-      return <g><path d="M8 3 v3 M4 12 h8 M8 6 L4 12 M8 6 L12 12" {...s}/><circle cx="8" cy="3" r="1.5" fill={color}/></g>;
+      return <g className="icon-spin"><path d="M8 3 v3 M4 12 h8 M8 6 L4 12 M8 6 L12 12" {...s}/><circle cx="8" cy="3" r="1.5" fill={color}/></g>;
     case 'service':
-      return <g><circle cx="8" cy="8" r="2.5" {...s}/><path d="M8 1v2 M8 13v2 M1 8h2 M13 8h2 M3.1 3.1l1.4 1.4 M11.5 11.5l1.4 1.4 M3.1 12.9l1.4-1.4 M11.5 4.5l1.4-1.4" {...s}/></g>;
+      return <g className="icon-spin"><circle cx="8" cy="8" r="2.5" {...s}/><path d="M8 1v2 M8 13v2 M1 8h2 M13 8h2 M3.1 3.1l1.4 1.4 M11.5 11.5l1.4 1.4 M3.1 12.9l1.4-1.4 M11.5 4.5l1.4-1.4" {...s}/></g>;
     case 'database':
-      return <g><ellipse cx="8" cy="4.5" rx="5" ry="1.8" {...s}/><path d="M3 4.5v7 Q3 14 8 14 Q13 14 13 11.5v-7" {...s}/><path d="M3 8 Q3 10 8 10 Q13 10 13 8" {...s}/></g>;
+      return <g className="icon-pulse"><ellipse cx="8" cy="4.5" rx="5" ry="1.8" {...s}/><path d="M3 4.5v7 Q3 14 8 14 Q13 14 13 11.5v-7" {...s}/><path d="M3 8 Q3 10 8 10 Q13 10 13 8" {...s}/></g>;
     case 'cache':
-      return <g><path d="M8 1.5 L11.5 6.5 H9.5 V9.5 H11.5 L8 14.5 L4.5 9.5 H6.5 V6.5 H4.5 Z" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.25"/></g>;
+      return <g className="icon-pulse"><path d="M8 1.5 L11.5 6.5 H9.5 V9.5 H11.5 L8 14.5 L4.5 9.5 H6.5 V6.5 H4.5 Z" stroke={color} strokeWidth="1.4" fill={color} fillOpacity="0.25"/></g>;
     case 'queue':
-      return <g><rect x="2" y="3.5" width="12" height="2.5" rx="1" fill={color} fillOpacity="0.8"/><rect x="2" y="7" width="12" height="2.5" rx="1" fill={color} fillOpacity="0.55"/><rect x="2" y="10.5" width="12" height="2.5" rx="1" fill={color} fillOpacity="0.3"/></g>;
+      return <g className="icon-pulse"><rect x="2" y="3.5" width="12" height="2.5" rx="1" fill={color} fillOpacity="0.8"/><rect x="2" y="7" width="12" height="2.5" rx="1" fill={color} fillOpacity="0.55"/><rect x="2" y="10.5" width="12" height="2.5" rx="1" fill={color} fillOpacity="0.3"/></g>;
     case 'external':
-      return <g><circle cx="8" cy="8" r="6" {...s}/><line x1="2" y1="8" x2="14" y2="8" stroke={color} strokeWidth="1.2"/><path d="M8 2 Q11 8 8 14 Q5 8 8 2" {...s}/></g>;
+      return <g className="icon-spin"><circle cx="8" cy="8" r="6" {...s}/><line x1="2" y1="8" x2="14" y2="8" stroke={color} strokeWidth="1.2"/><path d="M8 2 Q11 8 8 14 Q5 8 8 2" {...s}/></g>;
   }
 }
 
@@ -68,23 +68,43 @@ function pointsToPath(points: { x: number; y: number }[]): string {
   return d + ` L ${L.x} ${L.y}`;
 }
 
+function parseLabel(text: string) {
+  // Support simple <b> and <i> tags
+  const parts = text.split(/(<[bB]>.*?<\/[bB]>|<[iI]>.*?<\/[iI]>|<br\s*\/?>)/g);
+  return parts.map((part, i) => {
+    if (!part) return null;
+    const lower = part.toLowerCase();
+    if (lower.startsWith('<b>')) {
+      return <tspan key={i} fontWeight="bold">{part.slice(3, -4)}</tspan>;
+    }
+    if (lower.startsWith('<i>')) {
+      return <tspan key={i} fontStyle="italic">{part.slice(3, -4)}</tspan>;
+    }
+    if (lower.startsWith('<br')) {
+      return null; // breaks are handled by wrapLabel splitting
+    }
+    return part.replace(/<[^>]+>/g, '');
+  });
+}
+
 function wrapLabel(label: string, maxW: number): string[] {
   // Support explicit line breaks from Mermaid
   if (label.includes('<br>') || label.includes('<br/>')) {
-    return label.replace(/<br\s*\/?>/g, '\n').split('\n').map(l => l.trim()).slice(0, 4);
+    return label.replace(/<br\s*\/?>/g, '\n').split('\n').map(l => l.trim()).slice(0, 5);
   }
 
   const approxChars = Math.floor(maxW / 6.8);
-  if (label.length <= approxChars) return [label];
+  const plainText = label.replace(/<[^>]+>/g, '');
+  if (plainText.length <= approxChars) return [label];
   const words = label.split(' ');
   const lines: string[] = [];
   let cur = '';
   for (const w of words) {
-    if ((cur + ' ' + w).trim().length <= approxChars) cur = (cur + ' ' + w).trim();
+    if ((cur + ' ' + w).replace(/<[^>]+>/g, '').trim().length <= approxChars) cur = (cur + ' ' + w).trim();
     else { if (cur) lines.push(cur); cur = w; }
   }
   if (cur) lines.push(cur);
-  return lines.slice(0, 3); // Allow up to 3 lines
+  return lines.slice(0, 5); // Allow up to 5 lines
 }
 
 interface Props { graph: Graph; theme?: 'dark' | 'light'; }
@@ -94,15 +114,23 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
   const NODE_STYLES = isLight ? NODE_STYLES_LIGHT : NODE_STYLES_DARK;
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const transformContainerRef = useRef<HTMLDivElement>(null);
   const ctxRef = useRef<gsap.Context | null>(null);
   
-  // Pan and Zoom state
-  const [scale, setScale] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
+  // Pan and Zoom state stored in refs to avoid React renders on high-frequency wheel events
+  const transform = useRef({ scale: 1, x: 0, y: 0 });
+  
   const [isDragging, setIsDragging] = useState(false);
   const dragStart = useRef({ x: 0, y: 0 });
 
   const { width, height } = getGraphDimensions(graph);
+
+  // Apply transform to DOM
+  const applyTransform = useCallback(() => {
+    if (transformContainerRef.current) {
+      transformContainerRef.current.style.transform = `translate(${transform.current.x}px, ${transform.current.y}px) scale(${transform.current.scale})`;
+    }
+  }, []);
 
   // Center the graph initially
   useEffect(() => {
@@ -114,26 +142,58 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
       const scaleY = (ch - 100) / height;
       const initialScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.3), 1.5); // Bound between 0.3x and 1.5x
       
-      setScale(initialScale);
-      setPan({
+      transform.current = {
+        scale: initialScale,
         x: (cw - width * initialScale) / 2,
         y: (ch - height * initialScale) / 2
-      });
+      };
+      applyTransform();
     }
-  }, [width, height]);
+  }, [width, height, applyTransform]);
 
   useEffect(() => {
     ctxRef.current?.revert();
     ctxRef.current = gsap.context(() => {
       graph.edges.forEach((edge, i) => {
-        const pathEl = svgRef.current?.getElementById(`path-${edge.id}`);
+        const pathEl = svgRef.current?.getElementById(`path-${edge.id}`) as SVGPathElement | null;
         const pulseEl = svgRef.current?.getElementById(`pulse-${edge.id}`);
         if (!pathEl || !pulseEl) return;
+        
+        // 1. Initial edge drawing animation
+        const delay = i * 0.1;
+        if (!edge.isBackEdge) {
+          const length = pathEl.getTotalLength();
+          gsap.set(pathEl, { strokeDasharray: length, strokeDashoffset: length });
+          gsap.to(pathEl, { 
+            strokeDashoffset: 0, 
+            duration: 1.2, 
+            delay: delay, 
+            ease: 'power2.out',
+            onComplete: () => {
+              // Switch to dashed and start flowing!
+              gsap.set(pathEl, { strokeDasharray: "6 6" });
+              // Animate offset to create marching ants effect
+              gsap.to(pathEl, { strokeDashoffset: -12, duration: 0.6, repeat: -1, ease: 'none' });
+            }
+          });
+        } else {
+          gsap.set(pathEl, { opacity: 0 });
+          gsap.to(pathEl, { 
+            opacity: 1, 
+            duration: 1.2, 
+            delay: delay, 
+            ease: 'power2.out',
+            onComplete: () => {
+              gsap.to(pathEl, { strokeDashoffset: -9, duration: 0.6, repeat: -1, ease: 'none' });
+            }
+          });
+        }
+
         const duration = 1.5 + (i % 5) * 0.28;
         gsap.set(pulseEl, { opacity: 0 });
-        gsap.to(pulseEl, { opacity: 1, duration: 0.3, delay: i * 0.1 });
+        gsap.to(pulseEl, { opacity: 1, duration: 0.3, delay: delay + 0.5 });
         gsap.to(pulseEl, {
-          duration: duration, repeat: -1, ease: 'none', delay: i * 0.1,
+          duration: duration, repeat: -1, ease: 'none', delay: delay + 0.5,
           motionPath: { path: pathEl as SVGPathElement, align: pathEl as SVGPathElement, alignOrigin: [0.5, 0.5] },
           onRepeat: () => {
             const glowEl = svgRef.current?.getElementById(`glow-${edge.to}`);
@@ -154,16 +214,15 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return; // Only left click
     setIsDragging(true);
-    dragStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
-  }, [pan]);
+    dragStart.current = { x: e.clientX - transform.current.x, y: e.clientY - transform.current.y };
+  }, []);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!isDragging) return;
-    setPan({
-      x: e.clientX - dragStart.current.x,
-      y: e.clientY - dragStart.current.y
-    });
-  }, [isDragging]);
+    transform.current.x = e.clientX - dragStart.current.x;
+    transform.current.y = e.clientY - dragStart.current.y;
+    applyTransform();
+  }, [isDragging, applyTransform]);
 
   const handleMouseUp = useCallback(() => setIsDragging(false), []);
 
@@ -171,32 +230,46 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    let ticking = false;
+
     const handleWheelNative = (e: WheelEvent) => {
       e.preventDefault();
-      // Trackpad deltas are small, mouse wheel deltas are large (~100). Adjust sensitivity.
-      const zoomSensitivity = Math.abs(e.deltaY) < 50 ? 0.005 : 0.0015;
-      const delta = -e.deltaY * zoomSensitivity;
       
-      setScale(prevScale => {
-        const newScale = Math.min(Math.max(prevScale + delta, 0.05), 4);
-        
-        const rect = el.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
-        
-        setPan(prevPan => ({
-          x: mouseX - (mouseX - prevPan.x) * (newScale / prevScale),
-          y: mouseY - (mouseY - prevPan.y) * (newScale / prevScale)
-        }));
-        return newScale;
-      });
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          // Trackpad deltas are small, mouse wheel deltas are large (~100). Adjust sensitivity.
+          const zoomSensitivity = Math.abs(e.deltaY) < 50 ? 0.005 : 0.0015;
+          const delta = -e.deltaY * zoomSensitivity;
+          
+          const prevScale = transform.current.scale;
+          const newScale = Math.min(Math.max(prevScale + delta, 0.05), 4);
+          
+          const rect = el.getBoundingClientRect();
+          const mouseX = e.clientX - rect.left;
+          const mouseY = e.clientY - rect.top;
+          
+          transform.current.scale = newScale;
+          transform.current.x = mouseX - (mouseX - transform.current.x) * (newScale / prevScale);
+          transform.current.y = mouseY - (mouseY - transform.current.y) * (newScale / prevScale);
+          
+          applyTransform();
+          ticking = false;
+        });
+        ticking = true;
+      }
     };
     el.addEventListener('wheel', handleWheelNative, { passive: false });
     return () => el.removeEventListener('wheel', handleWheelNative);
-  }, []);
+  }, [applyTransform]);
 
-  const handleZoomIn = () => setScale(s => Math.min(s * 1.2, 3));
-  const handleZoomOut = () => setScale(s => Math.max(s / 1.2, 0.1));
+  const handleZoomIn = () => {
+    transform.current.scale = Math.min(transform.current.scale * 1.2, 3);
+    applyTransform();
+  };
+  const handleZoomOut = () => {
+    transform.current.scale = Math.max(transform.current.scale / 1.2, 0.1);
+    applyTransform();
+  };
   const handleZoomReset = () => {
     if (containerRef.current) {
       const cw = containerRef.current.clientWidth;
@@ -204,8 +277,12 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
       const scaleX = (cw - 100) / width;
       const scaleY = (ch - 100) / height;
       const initialScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.3), 1.5);
-      setScale(initialScale);
-      setPan({ x: (cw - width * initialScale) / 2, y: (ch - height * initialScale) / 2 });
+      transform.current = {
+        scale: initialScale,
+        x: (cw - width * initialScale) / 2,
+        y: (ch - height * initialScale) / 2
+      };
+      applyTransform();
     }
   };
 
@@ -249,15 +326,43 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
         </button>
       </div>
 
-      <div style={{
-        transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+      <div 
+        ref={transformContainerRef}
+        style={{
         transformOrigin: '0 0',
         width: `${width}px`,
         height: `${height}px`,
         willChange: 'transform'
       }}>
-        <svg ref={svgRef} width={width} height={height} style={{ display: 'block' }} xmlns="http://www.w3.org/2000/svg">
+        <svg id="pulsegraph-svg" ref={svgRef} width={width} height={height} style={{ display: 'block' }} xmlns="http://www.w3.org/2000/svg">
           <defs>
+            <style>
+              {`
+                @keyframes icon-spin {
+                  from { transform: rotate(0deg); }
+                  to { transform: rotate(360deg); }
+                }
+                .icon-spin {
+                  animation: icon-spin 4s linear infinite;
+                  transform-origin: 8px 8px;
+                }
+                @keyframes icon-pulse {
+                  0%, 100% { transform: scale(1); }
+                  50% { transform: scale(1.15); }
+                }
+                .icon-pulse {
+                  animation: icon-pulse 2.5s ease-in-out infinite;
+                  transform-origin: 8px 8px;
+                }
+                @keyframes icon-bounce {
+                  0%, 100% { transform: translateY(0); }
+                  50% { transform: translateY(-2px); }
+                }
+                .icon-bounce {
+                  animation: icon-bounce 2s ease-in-out infinite;
+                }
+              `}
+            </style>
             <filter id="pg" x="-80%" y="-80%" width="260%" height="260%">
               <feGaussianBlur stdDeviation="3.5" result="b"/>
               <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
@@ -283,7 +388,7 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
                   stroke={isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.12)"} strokeWidth="1" strokeDasharray="4 3"/>
                 <text x={gx + 12} y={gy + 14} fill={isLight ? "rgba(71,85,105,0.7)" : "rgba(255,255,255,0.4)"}
                   fontSize="10" fontFamily="Inter, system-ui, sans-serif" fontWeight="600" letterSpacing="0.08em">
-                  {grp.label}
+                  {parseLabel(grp.label)}
                 </text>
               </g>
             );
@@ -307,7 +412,7 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
                     <rect x={mid.x - 42} y={mid.y - 9} width={84} height={16} rx="3" fill={isLight ? '#FFFFFF' : '#090B10'} opacity={isLight ? "1" : "0.8"} stroke={isLight ? '#E2E8F0' : 'none'}/>
                     <text x={mid.x} y={mid.y} fill={edge.isBackEdge ? (isLight ? '#4F46E5' : '#818CF8') : (isLight ? '#475569' : '#475569')}
                       fontSize="9.5" textAnchor="middle" dominantBaseline="middle"
-                      fontFamily="Inter, system-ui, sans-serif">{edge.label}</text>
+                      fontFamily="Inter, system-ui, sans-serif">{parseLabel(edge.label)}</text>
                   </g>
                 )}
                 <circle id={`pulse-${edge.id}`} r="5" fill={dotColor} filter="url(#pg)" opacity="0"/>
@@ -345,7 +450,7 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
                       y={startY + li * lineH}
                       fill={isLight ? "#334155" : "#E2E8F0"} fontSize="11.5" fontWeight="500" textAnchor="middle"
                       dominantBaseline="middle" fontFamily="Inter, system-ui, sans-serif">
-                      {line}
+                      {parseLabel(line)}
                     </text>
                   ))}
                 </g>
