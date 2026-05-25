@@ -68,9 +68,13 @@ function pointsToPath(points: { x: number; y: number }[]): string {
   return d + ` L ${L.x} ${L.y}`;
 }
 
+function stripEmojis(text: string) {
+  return text.replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F1E6}-\u{1F1FF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}]/gu, '').trim();
+}
+
 function parseLabel(text: string) {
-  // Support simple <b> and <i> tags
-  const parts = text.split(/(<[bB]>.*?<\/[bB]>|<[iI]>.*?<\/[iI]>|<br\s*\/?>)/g);
+  const cleanText = stripEmojis(text);
+  const parts = cleanText.split(/(<[bB]>.*?<\/[bB]>|<[iI]>.*?<\/[iI]>|<br\s*\/?>)/g);
   return parts.map((part, i) => {
     if (!part) return null;
     const lower = part.toLowerCase();
@@ -88,15 +92,16 @@ function parseLabel(text: string) {
 }
 
 function wrapLabel(label: string, maxW: number): string[] {
+  const cleanLabel = stripEmojis(label);
   // Support explicit line breaks from Mermaid
-  if (label.includes('<br>') || label.includes('<br/>')) {
-    return label.replace(/<br\s*\/?>/g, '\n').split('\n').map(l => l.trim()).slice(0, 5);
+  if (cleanLabel.includes('<br>') || cleanLabel.includes('<br/>')) {
+    return cleanLabel.replace(/<br\s*\/?>/g, '\n').split('\n').map(l => l.trim()).slice(0, 5);
   }
 
   const approxChars = Math.floor(maxW / 6.8);
-  const plainText = label.replace(/<[^>]+>/g, '');
-  if (plainText.length <= approxChars) return [label];
-  const words = label.split(' ');
+  const plainText = cleanLabel.replace(/<[^>]+>/g, '');
+  if (plainText.length <= approxChars) return [cleanLabel];
+  const words = cleanLabel.split(' ');
   const lines: string[] = [];
   let cur = '';
   for (const w of words) {
@@ -154,25 +159,72 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
   useEffect(() => {
     ctxRef.current?.revert();
     ctxRef.current = gsap.context(() => {
+      // 1. Determine animation levels for each node based on AI steps
+      const nodeLevels = new Map<string, number>();
+      if (graph.animationSteps && graph.animationSteps.length > 0) {
+        graph.animationSteps.forEach((stepNodes, level) => {
+          stepNodes.forEach(nodeId => {
+            // Strip brackets if LLM mistakenly outputs A[Label] instead of A
+            const cleanId = nodeId.split(/[[({]/)[0].trim();
+            if (!nodeLevels.has(cleanId)) nodeLevels.set(cleanId, level);
+          });
+        });
+      }
+
+      // Assign fallback level for nodes not in animationSteps
+      const maxLevel = Math.max(-1, ...Array.from(nodeLevels.values()));
+      graph.nodes.forEach((node, i) => {
+        if (!nodeLevels.has(node.id)) {
+          const fallback = (graph.animationSteps?.length) ? maxLevel + 1 : i;
+          nodeLevels.set(node.id, fallback);
+        }
+      });
+
+      // 2. Animate Subgraph Groups
+      (graph.groups || []).forEach(grp => {
+        const grpEl = svgRef.current?.getElementById(`group-${grp.id}`);
+        if (grpEl) {
+          let minLevel = Infinity;
+          grp.members.forEach(m => {
+            const l = nodeLevels.get(m);
+            if (l !== undefined && l < minLevel) minLevel = l;
+          });
+          if (minLevel === Infinity) minLevel = 0;
+          gsap.fromTo(grpEl, { opacity: 0 }, { opacity: 1, duration: 0.8, delay: minLevel * 0.6 });
+        }
+      });
+
+      // 3. Animate Nodes
+      graph.nodes.forEach((node) => {
+        const level = nodeLevels.get(node.id) || 0;
+        const nodeEl = svgRef.current?.getElementById(`node-group-${node.id}`);
+        if (nodeEl) {
+          gsap.fromTo(nodeEl, 
+            { opacity: 0, scale: 0.8 }, 
+            { opacity: 1, scale: 1, duration: 0.6, delay: level * 0.6, ease: 'back.out(1.5)', clearProps: 'transform' }
+          );
+        }
+      });
+
+      // 4. Animate Edges
       graph.edges.forEach((edge, i) => {
         const pathEl = svgRef.current?.getElementById(`path-${edge.id}`) as SVGPathElement | null;
         const pulseEl = svgRef.current?.getElementById(`pulse-${edge.id}`);
         if (!pathEl || !pulseEl) return;
         
-        // 1. Initial edge drawing animation
-        const delay = i * 0.1;
+        const srcLevel = nodeLevels.get(edge.from) || 0;
+        const edgeDelay = srcLevel * 0.6 + 0.4; // Edge starts drawing just as node finishes popping
+        
         if (!edge.isBackEdge) {
           const length = pathEl.getTotalLength();
           gsap.set(pathEl, { strokeDasharray: length, strokeDashoffset: length });
           gsap.to(pathEl, { 
             strokeDashoffset: 0, 
             duration: 1.2, 
-            delay: delay, 
+            delay: edgeDelay, 
             ease: 'power2.out',
             onComplete: () => {
-              // Switch to dashed and start flowing!
               gsap.set(pathEl, { strokeDasharray: "6 6" });
-              // Animate offset to create marching ants effect
               gsap.to(pathEl, { strokeDashoffset: -12, duration: 0.6, repeat: -1, ease: 'none' });
             }
           });
@@ -181,7 +233,7 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
           gsap.to(pathEl, { 
             opacity: 1, 
             duration: 1.2, 
-            delay: delay, 
+            delay: edgeDelay, 
             ease: 'power2.out',
             onComplete: () => {
               gsap.to(pathEl, { strokeDashoffset: -9, duration: 0.6, repeat: -1, ease: 'none' });
@@ -191,9 +243,9 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
 
         const duration = 1.5 + (i % 5) * 0.28;
         gsap.set(pulseEl, { opacity: 0 });
-        gsap.to(pulseEl, { opacity: 1, duration: 0.3, delay: delay + 0.5 });
+        gsap.to(pulseEl, { opacity: 1, duration: 0.3, delay: edgeDelay + 0.5 });
         gsap.to(pulseEl, {
-          duration: duration, repeat: -1, ease: 'none', delay: delay + 0.5,
+          duration: duration, repeat: -1, ease: 'none', delay: edgeDelay + 0.5,
           motionPath: { path: pathEl as SVGPathElement, align: pathEl as SVGPathElement, alignOrigin: [0.5, 0.5] },
           onRepeat: () => {
             const glowEl = svgRef.current?.getElementById(`glow-${edge.to}`);
@@ -373,6 +425,9 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
             <marker id="arr-b" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
               <polygon points="0 0,8 3,0 6" fill={isLight ? "#6366F1" : "#6366F1"}/>
             </marker>
+            {graph.aiAnimations?.cssKeyframes && (
+              <style dangerouslySetInnerHTML={{ __html: graph.aiAnimations.cssKeyframes }} />
+            )}
           </defs>
 
           {/* ── Groups (subgraph boxes) ── */}
@@ -382,7 +437,7 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
             const gx = (grp.x ?? 0) - (grp.width / 2);
             const gy = (grp.y ?? 0) - (grp.height / 2);
             return (
-              <g key={grp.id}>
+              <g key={grp.id} id={`group-${grp.id}`}>
                 <rect x={gx} y={gy} width={grp.width} height={grp.height} rx="10"
                   fill={grp.color ?? (isLight ? 'rgba(241,245,249,0.5)' : 'rgba(100,116,139,0.08)')}
                   stroke={isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.12)"} strokeWidth="1" strokeDasharray="4 3"/>
@@ -430,9 +485,10 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
             const lines = wrapLabel(node.label, w - 36);
             const lineH = 14;
             const startY = h / 2 - ((lines.length - 1) * lineH) / 2;
+            const aiClass = graph.aiAnimations?.nodeClasses?.[node.id] || '';
             return (
               <g key={node.id} transform={`translate(${rx},${ry})`}>
-                <g className="node-group" style={{ transformOrigin: `${w / 2}px ${h / 2}px` }}>
+                <g id={`node-group-${node.id}`} className={`node-group ${aiClass}`} style={{ transformOrigin: `${w / 2}px ${h / 2}px` }}>
                   {/* Outer glow rect */}
                   <rect id={`glow-${node.id}`} x="-3" y="-3" width={w + 6} height={h + 6} rx="11" fill={st.border} opacity="0.07"/>
                   {/* Main box */}

@@ -3,6 +3,7 @@ import gsap from 'gsap';
 
 export async function exportGif(
   svgElement: HTMLElement,
+  duration: number,
   onProgress?: (pct: number) => void
 ): Promise<string> {
   return new Promise(async (resolve, reject) => {
@@ -13,7 +14,6 @@ export async function exportGif(
       );
 
       const fps = 15;
-      const duration = 3;
       const frames = fps * duration;
       const width = 1920;
       const height = 1080;

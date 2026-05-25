@@ -21,6 +21,11 @@ export interface GraphGroup {
 export interface Graph {
   nodes: GraphNode[]; edges: GraphEdge[];
   groups?: GraphGroup[]; layout?: 'LR' | 'TB';
+  animationSteps?: string[][]; // Array of arrays of node IDs defining animation sequence
+  aiAnimations?: {
+    cssKeyframes: string;
+    nodeClasses: Record<string, string>;
+  };
 }
 export interface ChatMessage {
   id: string; role: 'user' | 'assistant';

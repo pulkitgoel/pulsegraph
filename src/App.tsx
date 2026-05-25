@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { ChatPanel } from './components/ChatPanel';
 import { DiagramCanvas } from './components/DiagramCanvas';
+import { RichDiagramCanvas } from './components/RichDiagramCanvas';
 import { sendMessage } from './services/llmService';
 import { exportGif } from './services/gifExporter';
 import { computeLayout } from './parser/layoutEngine';
@@ -40,6 +41,8 @@ export default function App() {
   const [gifUrl, setGifUrl] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [viewMode, setViewMode] = useState<'classic' | 'rich'>('rich');
+  const [showChat, setShowChat] = useState(true);
 
   const canvasContainerRef = useRef<HTMLDivElement>(null);
 
@@ -130,7 +133,9 @@ export default function App() {
     }
     setIsExporting(true); setExportProgress(0); setGifUrl(null);
     try {
-      const url = await exportGif(svgElement, (pct) => setExportProgress(pct));
+      const numSteps = graph.animationSteps ? graph.animationSteps.length : graph.nodes.length;
+      const duration = Math.max(3, numSteps * 0.6 + 2);
+      const url = await exportGif(svgElement, duration, (pct) => setExportProgress(pct));
       if (fileHandle) {
         const blob = await fetch(url).then((r) => r.blob());
         URL.revokeObjectURL(url);
@@ -173,9 +178,20 @@ export default function App() {
           </div>
           {appState === 'active' && (
             <>
-              {mermaidSource && (
-                <button className="btn-mermaid-toggle" onClick={() => setShowMermaid((v) => !v)}>
-                  {showMermaid ? '▲ Hide Source' : '⟨/⟩ Mermaid Source'}
+              {graph && (
+                <div className="view-toggle">
+                  <button className={viewMode === 'classic' ? 'active' : ''} onClick={() => setViewMode('classic')}>Classic</button>
+                  <button className={viewMode === 'rich' ? 'active' : ''} onClick={() => setViewMode('rich')}>Rich Icons</button>
+                </div>
+              )}
+              {graph && (
+                <button className="btn-mermaid-toggle" onClick={() => setShowChat(!showChat)}>
+                  {showChat ? 'Hide Chat' : 'Show Chat'}
+                </button>
+              )}
+              {graph && (
+                <button className="btn-mermaid-toggle" onClick={() => setShowMermaid(!showMermaid)}>
+                  {showMermaid ? 'Hide Code' : '</> Code'}
                 </button>
               )}
               <p className="app-tagline">AI-powered architecture animation</p>
@@ -186,7 +202,7 @@ export default function App() {
 
       <div className={`app-main ${appState}`}>
         {/* ── Active chat panel (LEFT) ── */}
-        {appState === 'active' && (
+        {appState === 'active' && showChat && (
           <ChatPanel
             messages={messages}
             isLoading={isLoading}
@@ -202,17 +218,18 @@ export default function App() {
         )}
 
         {/* ── Canvas (RIGHT) ── */}
-      <div
-        className={`canvas-section ${appState === 'active' ? 'canvas-section--visible' : ''}`}
-        ref={canvasContainerRef}
-      >
-        {graph && <DiagramCanvas graph={graph} theme={theme} />}
+      <main className={`canvas-section ${graph ? 'canvas-section--visible' : ''}`} ref={canvasContainerRef}>
+        {graph && (
+          viewMode === 'rich'
+            ? <RichDiagramCanvas graph={graph} />
+            : <DiagramCanvas graph={graph} theme={theme} />
+        )}
 
         {/* Mermaid source panel */}
-        {showMermaid && mermaidSource && (
+        {showMermaid && graph && (
           <div className="mermaid-panel">
             <div className="mermaid-panel-header">
-              <span>Validated Mermaid Source</span>
+              <span>Mermaid Source</span>
               <button className="mermaid-copy-btn" onClick={handleCopyMermaid}>
                 {copied ? '✓ Copied!' : '⎘ Copy'}
               </button>
@@ -220,7 +237,7 @@ export default function App() {
             <pre className="mermaid-panel-code">{mermaidSource}</pre>
           </div>
         )}
-      </div>
+      </main>
 
       {/* ── GIF Ready Toast ── */}
       {gifUrl && (

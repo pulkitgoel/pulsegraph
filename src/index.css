@@ -749,3 +749,32 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
 .node-group:hover {
   transform: scale(1.04);
 }
+
+/* ── Rich Canvas Animations ── */
+/* ── Rich Canvas Animations (Managed by GSAP) ── */
+
+/* View Toggle Menu */
+.view-toggle {
+  display: flex;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+  margin-right: 1rem;
+}
+.view-toggle button {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 4px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.view-toggle button.active {
+  background: var(--surface-2);
+  color: var(--accent);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
