@@ -8,13 +8,14 @@ const MAX_WIDTH = 320;
 const ICON_PAD = 38;
 
 function getLabelLines(label: string, maxWidth: number): string[] {
-  if (label.includes('<br>') || label.includes('<br/>')) {
-    return label.replace(/<br\s*\/?>/g, '\n').split('\n').map(l => l.trim()).slice(0, 5);
+  let cleanLabel = label.replace(/\\n/g, '\n').replace(/<br\s*\/?>/g, '\n');
+  if (cleanLabel.includes('\n')) {
+    return cleanLabel.split('\n').map(l => l.trim()).slice(0, 5);
   }
   const approxChars = Math.floor(maxWidth / CHAR_PX);
-  const plainText = label.replace(/<[^>]+>/g, '');
-  if (plainText.length <= approxChars) return [label];
-  const words = label.split(' ');
+  const plainText = cleanLabel.replace(/<[^>]+>/g, '');
+  if (plainText.length <= approxChars) return [cleanLabel];
+  const words = cleanLabel.split(' ');
   const lines: string[] = [];
   let cur = '';
   for (const w of words) {
@@ -108,8 +109,20 @@ export function computeLayout(graph: Graph): Graph {
     return { ...n, x: nd?.x ?? 0, y: nd?.y ?? 0 };
   });
 
+  let globalMinX = Infinity;
+  let globalMaxY = -Infinity;
+  positionedNodes.forEach(n => {
+     const w = n.width || MIN_WIDTH;
+     const h = n.height || NODE_HEIGHT;
+     globalMinX = Math.min(globalMinX, (n.x || 0) - w/2);
+     globalMaxY = Math.max(globalMaxY, (n.y || 0) + h/2);
+  });
+  
+  let backEdgeCount = 0;
+
   const positionedEdges: GraphEdge[] = graph.edges.map((e) => {
     if (backEdgeIds.has(e.id)) {
+      backEdgeCount++;
       const from = positionedNodes.find((n) => n.id === e.from)!;
       const to   = positionedNodes.find((n) => n.id === e.to)!;
       if (!from || !to) return { ...e, points: [], isBackEdge: true };
@@ -122,7 +135,8 @@ export function computeLayout(graph: Graph): Graph {
       const tx = to.x   ?? 0, ty = to.y   ?? 0;
 
       if (!isVertical) {
-        const curveY = Math.max(fy, ty) + fh + 50;
+        const localMaxY = Math.max(fy + fh, ty + th);
+        const curveY = localMaxY + 30 + (backEdgeCount * 25);
         return {
           ...e, isBackEdge: true,
           points: [
@@ -134,7 +148,8 @@ export function computeLayout(graph: Graph): Graph {
           ],
         };
       } else {
-        const curveX = Math.min(fx, tx) - Math.max(fw, tw) - 50;
+        const localMinX = Math.min(fx - fw, tx - tw);
+        const curveX = localMinX - 30 - (backEdgeCount * 25);
         return {
           ...e, isBackEdge: true,
           points: [

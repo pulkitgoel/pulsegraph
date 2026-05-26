@@ -4,7 +4,7 @@ import { ChatPanel } from './components/ChatPanel';
 import { DiagramCanvas } from './components/DiagramCanvas';
 import { RichDiagramCanvas } from './components/RichDiagramCanvas';
 import { sendMessage } from './services/llmService';
-import { exportGif } from './services/gifExporter';
+import { exportPng, exportGif } from './services/gifExporter';
 import { computeLayout } from './parser/layoutEngine';
 import type { Graph, ChatMessage, LlmProvider, OllamaModel } from './types';
 
@@ -43,6 +43,7 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState<'classic' | 'rich'>('rich');
   const [showChat, setShowChat] = useState(true);
+  const [exportType, setExportType] = useState<'png' | 'gif' | null>(null);
 
   const canvasContainerRef = useRef<HTMLDivElement>(null);
 
@@ -82,7 +83,7 @@ export default function App() {
       setLoadingStep('generating');
 
       try {
-        const result = await sendMessage(userText, messages, graph, apiKey, provider, ollamaModel, (step) => setLoadingStep(step));
+        const result = await sendMessage(userText, messages, { ...graph, mermaidSource } as Graph & { mermaidSource: string }, apiKey, provider, ollamaModel, (step) => setLoadingStep(step));
 
         const aiMsg: ChatMessage = {
           id: getId(),
@@ -115,27 +116,31 @@ export default function App() {
 
   const handleIdleSubmit = () => { if (input.trim()) submitMessage(input); };
 
-  const handleExport = async () => {
+  const handleExport = async (type: 'png' | 'gif') => {
     if (!graph) return;
     const svgElement = document.getElementById('pulsegraph-svg');
     if (!svgElement) return;
 
+    setExportType(type);
     let fileHandle: FileSystemFileHandle | null = null;
     if ('showSaveFilePicker' in window) {
       try {
+        const suggestedName = `pulsegraph-flow.${type}`;
+        const description = type === 'png' ? 'PNG Image' : 'GIF Image';
+        const accept = type === 'png' ? { 'image/png': ['.png'] } : { 'image/gif': ['.gif'] };
         fileHandle = await (window as unknown as {
           showSaveFilePicker: (opts: object) => Promise<FileSystemFileHandle>;
         }).showSaveFilePicker({
-          suggestedName: 'pulsegraph-flow.gif',
-          types: [{ description: 'Animated GIF', accept: { 'image/gif': ['.gif'] } }],
+          suggestedName,
+          types: [{ description, accept }],
         });
       } catch { return; }
     }
     setIsExporting(true); setExportProgress(0); setGifUrl(null);
     try {
-      const numSteps = graph.animationSteps ? graph.animationSteps.length : graph.nodes.length;
-      const duration = Math.max(3, numSteps * 0.6 + 2);
-      const url = await exportGif(svgElement, duration, (pct) => setExportProgress(pct));
+      const url = type === 'png'
+        ? await exportPng(svgElement, theme, (pct) => setExportProgress(pct))
+        : await exportGif(svgElement, theme, 3, (pct) => setExportProgress(pct));
       if (fileHandle) {
         const blob = await fetch(url).then((r) => r.blob());
         URL.revokeObjectURL(url);
@@ -146,7 +151,7 @@ export default function App() {
         setGifUrl(url);
         setTimeout(() => { URL.revokeObjectURL(url); setGifUrl(null); }, 120_000);
       }
-    } catch (err) { console.error('GIF export failed:', err); }
+    } catch (err) { console.error(`${type.toUpperCase()} export failed:`, err); }
     finally { setIsExporting(false); setExportProgress(0); }
   };
 
@@ -210,7 +215,8 @@ export default function App() {
             input={input}
             onInputChange={setInput}
             onSubmit={() => submitMessage(input)}
-            onExportGif={handleExport}
+            onExportGif={() => handleExport('gif')}
+            onExportPng={() => handleExport('png')}
             isExporting={isExporting}
             exportProgress={exportProgress}
             onResetKey={handleResetConfig}
@@ -221,7 +227,7 @@ export default function App() {
       <main className={`canvas-section ${graph ? 'canvas-section--visible' : ''}`} ref={canvasContainerRef}>
         {graph && (
           viewMode === 'rich'
-            ? <RichDiagramCanvas graph={graph} />
+            ? <RichDiagramCanvas graph={graph} theme={theme} />
             : <DiagramCanvas graph={graph} theme={theme} />
         )}
 
@@ -239,13 +245,14 @@ export default function App() {
         )}
       </main>
 
-      {/* ── GIF Ready Toast ── */}
+      {/* ── PNG Ready Toast ── */}
       {gifUrl && (
         <div className="gif-toast">
-          <span>🎉 GIF ready!</span>
-          <a href={gifUrl} download="pulsegraph-flow.gif" className="gif-toast-btn"
+          <span>🎉 {exportType === 'png' ? 'PNG' : 'GIF'} ready!</span>
+          <a href={gifUrl} download={`pulsegraph-flow.${exportType}`} className="gif-toast-btn"
+            style={{ background: exportType === 'png' ? 'linear-gradient(135deg, var(--accent), var(--accent-2))' : 'linear-gradient(135deg, #10B981, #34D399)' }}
             onClick={() => setTimeout(() => setGifUrl(null), 500)}>
-            ⬇ Download pulsegraph-flow.gif
+            ⬇ Download pulsegraph-flow.{exportType}
           </a>
           <button className="gif-toast-close" onClick={() => setGifUrl(null)}>✕</button>
         </div>

@@ -92,10 +92,11 @@ function parseLabel(text: string) {
 }
 
 function wrapLabel(label: string, maxW: number): string[] {
-  const cleanLabel = stripEmojis(label);
-  // Support explicit line breaks from Mermaid
-  if (cleanLabel.includes('<br>') || cleanLabel.includes('<br/>')) {
-    return cleanLabel.replace(/<br\s*\/?>/g, '\n').split('\n').map(l => l.trim()).slice(0, 5);
+  let cleanLabel = stripEmojis(label);
+  // Support explicit line breaks from Mermaid or literal \n
+  cleanLabel = cleanLabel.replace(/\\n/g, '\n').replace(/<br\s*\/?>/g, '\n');
+  if (cleanLabel.includes('\n')) {
+    return cleanLabel.split('\n').map(l => l.trim()).slice(0, 5);
   }
 
   const approxChars = Math.floor(maxW / 6.8);
@@ -159,26 +160,44 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
   useEffect(() => {
     ctxRef.current?.revert();
     ctxRef.current = gsap.context(() => {
-      // 1. Determine animation levels for each node based on AI steps
+      // 1. Determine animation levels deterministically via BFS
       const nodeLevels = new Map<string, number>();
-      if (graph.animationSteps && graph.animationSteps.length > 0) {
-        graph.animationSteps.forEach((stepNodes, level) => {
-          stepNodes.forEach(nodeId => {
-            // Strip brackets if LLM mistakenly outputs A[Label] instead of A
-            const cleanId = nodeId.split(/[[({]/)[0].trim();
-            if (!nodeLevels.has(cleanId)) nodeLevels.set(cleanId, level);
-          });
-        });
-      }
-
-      // Assign fallback level for nodes not in animationSteps
-      const maxLevel = Math.max(-1, ...Array.from(nodeLevels.values()));
-      graph.nodes.forEach((node, i) => {
-        if (!nodeLevels.has(node.id)) {
-          const fallback = (graph.animationSteps?.length) ? maxLevel + 1 : i;
-          nodeLevels.set(node.id, fallback);
+      const inDegree = new Map<string, number>();
+      const adj = new Map<string, string[]>();
+      
+      graph.nodes.forEach(n => { inDegree.set(n.id, 0); adj.set(n.id, []); });
+      graph.edges.forEach(e => {
+        if (!e.isBackEdge) {
+          inDegree.set(e.to, (inDegree.get(e.to) || 0) + 1);
+          adj.get(e.from)?.push(e.to);
         }
       });
+      
+      let queue: string[] = [];
+      graph.nodes.forEach(n => { if (inDegree.get(n.id) === 0) queue.push(n.id); });
+      
+      let currentLevel = 0;
+      while (queue.length > 0) {
+        const nextQueue: string[] = [];
+        for (const u of queue) {
+          nodeLevels.set(u, currentLevel);
+          for (const v of (adj.get(u) || [])) {
+            inDegree.set(v, (inDegree.get(v) || 0) - 1);
+            if (inDegree.get(v) === 0) nextQueue.push(v);
+          }
+        }
+        queue = nextQueue;
+        currentLevel++;
+      }
+      
+      // Assign fallback level for cycles or disconnected nodes
+      graph.nodes.forEach(node => {
+        if (!nodeLevels.has(node.id)) {
+          nodeLevels.set(node.id, currentLevel);
+        }
+      });
+      // Store globally on the graph so rendering badges can reuse it!
+      (graph as any).computedLevels = nodeLevels;
 
       // 2. Animate Subgraph Groups
       (graph.groups || []).forEach(grp => {
@@ -258,6 +277,19 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
           }
         });
       });
+
+      // 5. Continuous Icon Animations (Migrated from CSS for SVG export compatibility)
+      gsap.to('.icon-spin', { rotation: 360, duration: 4, repeat: -1, ease: 'none', transformOrigin: 'center' });
+      gsap.to('.icon-pulse', { scale: 1.15, duration: 1.25, yoyo: true, repeat: -1, ease: 'power1.inOut', transformOrigin: 'center' });
+      gsap.to('.icon-bounce', { y: -2, duration: 1, yoyo: true, repeat: -1, ease: 'power1.inOut' });
+      gsap.to('.led-blink', { opacity: 0.2, duration: 0.8, yoyo: true, repeat: -1, ease: 'power1.inOut' });
+      gsap.to('.rich-pulse', { scale: 1.25, opacity: 0.5, duration: 1.5, yoyo: true, repeat: -1, ease: 'power1.inOut', transformOrigin: 'center' });
+      gsap.to('.data-flow', { strokeDashoffset: -20, strokeDasharray: "4 4", duration: 1, repeat: -1, ease: 'none' });
+      gsap.to('.scan-line', { y: 6, duration: 2, yoyo: true, repeat: -1, ease: 'sine.inOut' });
+      gsap.to('.robot-body-dance', { y: -1, duration: 0.5, yoyo: true, repeat: -1, ease: 'power1.inOut' });
+      gsap.to('.robot-arm-l', { rotation: 15, duration: 0.5, yoyo: true, repeat: -1, ease: 'power1.inOut', transformOrigin: 'top center' });
+      gsap.to('.robot-arm-r', { rotation: -15, duration: 0.5, yoyo: true, repeat: -1, ease: 'power1.inOut', transformOrigin: 'top center' });
+
     }, svgRef);
     return () => ctxRef.current?.revert();
   }, [graph]);
@@ -388,33 +420,6 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
       }}>
         <svg id="pulsegraph-svg" ref={svgRef} width={width} height={height} style={{ display: 'block' }} xmlns="http://www.w3.org/2000/svg">
           <defs>
-            <style>
-              {`
-                @keyframes icon-spin {
-                  from { transform: rotate(0deg); }
-                  to { transform: rotate(360deg); }
-                }
-                .icon-spin {
-                  animation: icon-spin 4s linear infinite;
-                  transform-origin: 8px 8px;
-                }
-                @keyframes icon-pulse {
-                  0%, 100% { transform: scale(1); }
-                  50% { transform: scale(1.15); }
-                }
-                .icon-pulse {
-                  animation: icon-pulse 2.5s ease-in-out infinite;
-                  transform-origin: 8px 8px;
-                }
-                @keyframes icon-bounce {
-                  0%, 100% { transform: translateY(0); }
-                  50% { transform: translateY(-2px); }
-                }
-                .icon-bounce {
-                  animation: icon-bounce 2s ease-in-out infinite;
-                }
-              `}
-            </style>
             <filter id="pg" x="-80%" y="-80%" width="260%" height="260%">
               <feGaussianBlur stdDeviation="3.5" result="b"/>
               <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
@@ -486,6 +491,11 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
             const lineH = 14;
             const startY = h / 2 - ((lines.length - 1) * lineH) / 2;
             const aiClass = graph.aiAnimations?.nodeClasses?.[node.id] || '';
+            
+            // Use the deterministically computed levels for badges (1-indexed)
+            const computedLevels = (graph as any).computedLevels as Map<string, number> | undefined;
+            const stepNumber = computedLevels && computedLevels.has(node.id) ? computedLevels.get(node.id)! + 1 : null;
+
             return (
               <g key={node.id} transform={`translate(${rx},${ry})`}>
                 <g id={`node-group-${node.id}`} className={`node-group ${aiClass}`} style={{ transformOrigin: `${w / 2}px ${h / 2}px` }}>
@@ -509,6 +519,16 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
                       {parseLabel(line)}
                     </text>
                   ))}
+                  
+                  {/* Step Badge */}
+                  {stepNumber !== null && (
+                    <g transform={`translate(${w - 6}, -6)`}>
+                      <circle cx="0" cy="0" r="9" fill="#FDE047" stroke="#CA8A04" strokeWidth="1.5" filter="url(#pg)" />
+                      <text x="0" y="1" fill="#000" fontSize="10" fontWeight="800" textAnchor="middle" dominantBaseline="middle" fontFamily="Inter, system-ui, sans-serif">
+                        {stepNumber}
+                      </text>
+                    </g>
+                  )}
                 </g>
               </g>
             );

@@ -13,7 +13,8 @@ STRICT OUTPUT RULES:
 - "mermaidCode" must be a string containing the raw Mermaid flowchart code (starting with "flowchart LR" or "flowchart TD").
 - "animationSteps" must be an array of arrays of strings. Each inner array contains the node IDs that should animate in together at that step.
 - "aiAnimations" must be an object with two keys: "cssKeyframes" (raw CSS @keyframes definitions) and "nodeClasses" (a map of node IDs to the CSS class names you generated).
-- IMPORTANT: You have full freedom to write CSS keyframes for floating, bouncing, pulsing, or glowing. Arrange the CSS correctly according to the flow or architecture (e.g., databases get data-ring animations, gateways get pulsing shields, floating effects for cloud nodes).
+- IMPORTANT: You have full freedom to write CSS keyframes for floating, bouncing, pulsing, or glowing. Arrange the CSS correctly according to the flow or architecture.
+- CONTEXT PRESERVATION: If the user provides an existing Mermaid diagram in the "Context" and asks for visual/appearance changes, you MUST keep the original nodes, edges, and labels EXACTLY the same. Only append inline 'style' directives (e.g. style A fill:#ff0000) to the mermaidCode, or update the 'aiAnimations'. DO NOT use classDef.
 - Example: {"mermaidCode": "flowchart LR\\nA[User] --> B[API]", "animationSteps": [["A"], ["B"]], "aiAnimations": {"cssKeyframes": "@keyframes float { 0% { transform: translateY(0); } 50% { transform: translateY(-10px); } 100% { transform: translateY(0); } } .ai-float { animation: float 3s ease-in-out infinite; }", "nodeClasses": {"A": "ai-float", "B": "ai-float"}}}
 - Use node SHAPES to encode semantic type:
     A[Label]     = service / process / backend
@@ -22,7 +23,6 @@ STRICT OUTPUT RULES:
     A[(Label)]   = database / storage (SQL, NoSQL)
     A[/Label/]   = cache / queue (Redis, Kafka, RabbitMQ)
     A((Label))   = user / actor / person
-- Use short, clear edge labels (2-4 words max). Every edge MUST have a label.
 - ALWAYS convert to Flowcharts. If the user asks for a Mindmap or Sequence Diagram, TRANSLATE their intent into a "flowchart TD".
 - If input is unrelated to diagrams: output exactly: {"mermaidCode": "OFFTOPIC", "animationSteps": [], "aiAnimations": {"cssKeyframes": "", "nodeClasses": {}}}`;
 
@@ -30,12 +30,13 @@ STRICT OUTPUT RULES:
 const VALIDATE_PROMPT = `You are a technical diagram reviewer. Given a JSON object with Mermaid flowchart code, animation steps, and aiAnimations, validate and correct it.
 
 CHECK FOR:
-1. Missing return paths: if A calls B, is there a response edge from B back to A?
-2. Dead-end nodes: nodes with no outgoing edge (unless they are terminal outputs like DB/user)
-3. Wrong edge direction (should follow data/request flow)
-4. Missing or vague edge labels
-5. Animation sequence: Does the animation order logically follow the data flow? Do parallel processes animate together?
-6. Ensure aiAnimations are preserved and semantically match the nodes.
+1. Syntax errors: Ensure the Mermaid code is valid.
+2. Animation sequence: Does the animation order logically follow the data flow?
+3. Ensure aiAnimations are preserved and semantically match the nodes.
+
+CRITICAL RULE:
+- DO NOT alter the topology (do not add/remove nodes, do not change edges or labels) unless fixing a strict syntax error. 
+- Respect the user's original architecture exactly as provided.
 
 OUTPUT RULES:
 - Output a RAW JSON object ONLY. No markdown fences (\`\`\`), no explanation.
