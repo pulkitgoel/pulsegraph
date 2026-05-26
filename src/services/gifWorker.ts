@@ -9,6 +9,7 @@ let height = 0;
 let frames = 0;
 let delay = 0;
 let framesEncoded = 0;
+let globalPalette: any = null;
 
 workerSelf.onmessage = (e: MessageEvent) => {
   const msg = e.data;
@@ -20,12 +21,17 @@ workerSelf.onmessage = (e: MessageEvent) => {
     delay = Math.round(1000 / msg.fps);
     gif = GIFEncoder();
     framesEncoded = 0;
+    globalPalette = null;
   } 
+  else if (msg.type === 'palette') {
+    const u8 = new Uint8Array(msg.data);
+    globalPalette = quantize(u8, 256, { format: 'rgb565' });
+  }
   else if (msg.type === 'frame') {
     if (!gif) return;
     const u8 = new Uint8Array(msg.data);
-    const palette = quantize(u8, 256);
-    const index = applyPalette(u8, palette);
+    const palette = globalPalette || quantize(u8, 256, { format: 'rgb565' });
+    const index = applyPalette(u8, palette, { format: 'rgb565' });
     gif.writeFrame(index, width, height, { palette, delay });
     
     framesEncoded++;
@@ -40,5 +46,7 @@ workerSelf.onmessage = (e: MessageEvent) => {
     workerSelf.postMessage({ type: 'progress', pct: 100 });
     workerSelf.postMessage({ type: 'done', buffer: buf }, [buf]);
     gif = null;
+    globalPalette = null;
   }
 };
+

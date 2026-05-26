@@ -67,16 +67,16 @@ function serializeFrameSvg(
   const doc = parser.parseFromString(svgStr, 'image/svg+xml');
   const rootSvg = doc.documentElement;
 
+  // Clear any inline styles that could override width/height attributes
+  rootSvg.removeAttribute('style');
+
   rootSvg.setAttribute('width', canvasW.toString());
   rootSvg.setAttribute('height', canvasH.toString());
+  rootSvg.setAttribute('viewBox', `0 0 ${svgW} ${svgH}`);
 
-  if (!rootSvg.getAttribute('viewBox')) {
-    rootSvg.setAttribute('viewBox', `0 0 ${svgW} ${svgH}`);
-  }
-
-  // Optimize text rendering legibility inside SVG
+  // Optimize text rendering inside SVG using geometricPrecision
   rootSvg.querySelectorAll('text').forEach((t) => {
-    t.setAttribute('text-rendering', 'optimizeLegibility');
+    t.setAttribute('text-rendering', 'geometricPrecision');
   });
 
   // If exporting as GIF, strip heavy filters, glows, and gradients to prevent color quantization blur
@@ -94,16 +94,23 @@ function serializeFrameSvg(
     overlays.forEach(el => el.remove());
   }
 
-  if (fontCss) {
-    let defs = rootSvg.querySelector('defs');
-    if (!defs) {
-      defs = doc.createElementNS('http://www.w3.org/2000/svg', 'defs');
-      rootSvg.insertBefore(defs, rootSvg.firstChild);
-    }
-    const styleEl = doc.createElementNS('http://www.w3.org/2000/svg', 'style');
-    styleEl.textContent = fontCss;
-    defs.appendChild(styleEl);
+  let defs = rootSvg.querySelector('defs');
+  if (!defs) {
+    defs = doc.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    rootSvg.insertBefore(defs, rootSvg.firstChild);
   }
+  const styleEl = doc.createElementNS('http://www.w3.org/2000/svg', 'style');
+  // Inject text antialiasing and high-quality system font stacks as fallback
+  const extraStyles = `
+    text {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+      -webkit-font-smoothing: antialiased !important;
+      -moz-osx-font-smoothing: grayscale !important;
+      text-rendering: geometricPrecision !important;
+    }
+  `;
+  styleEl.textContent = (fontCss || '') + extraStyles;
+  defs.appendChild(styleEl);
 
   return serializer.serializeToString(rootSvg);
 }
@@ -139,23 +146,38 @@ export async function exportPng(
     const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const img = new Image();
-    img.onload = () => {
+    // Explicitly set width and height properties to force high-DPI rasterization
+    img.width = canvasW;
+    img.height = canvasH;
+    img.onload = async () => {
+      try {
+        if ('decode' in img) {
+          await img.decode();
+        }
+        // Hold on rendering to ensure base64 fonts are parsed and registered by the browser
+        await new Promise((r) => setTimeout(r, 100));
+      } catch (err) {
+        console.warn('Image decode / font loading delay failed:', err);
+      }
+
       // Compose onto the final canvas with background and padding
       const canvas = document.createElement('canvas');
       canvas.width  = targetW;
       canvas.height = targetH;
       const ctx = canvas.getContext('2d')!;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       if ('textRendering' in ctx) {
-        (ctx as any).textRendering = 'optimizeLegibility';
+        (ctx as any).textRendering = 'geometricPrecision';
       }
       
       // Fill theme background color
       ctx.fillStyle = theme === 'light' ? '#F8FAFC' : '#090B10';
       ctx.fillRect(0, 0, targetW, targetH);
       
-      // Draw diagram at exact scaled dimensions with padding offset, ensuring 1:1 pixel rendering
-      const dx = PADDING * SCALE;
-      const dy = PADDING * SCALE;
+      // Draw diagram at exact scaled dimensions with rounded padding offset
+      const dx = Math.round(PADDING * SCALE);
+      const dy = Math.round(PADDING * SCALE);
       ctx.drawImage(img, dx, dy, canvasW, canvasH);
       
       URL.revokeObjectURL(url);
@@ -183,13 +205,13 @@ export async function exportGif(
   const svgW = parseFloat(svgElement.getAttribute('width') || '1000');
   const svgH = parseFloat(svgElement.getAttribute('height') || '1000');
 
-  // Default target scale is 4.0x for ultra-crisp text inside the GIF
-  const SCALE = 4.0;
+  // Scale of 3.0x is optimal for high-resolution clarity and crisp rendering
+  const SCALE = 3.0;
   const PADDING = 40;
   const rawW = svgW + PADDING * 2;
   const rawH = svgH + PADDING * 2;
   
-  // Cap maximum GIF dimension to 4096px (4K+ resolution) to prevent memory issues on extremely huge diagrams
+  // Cap maximum GIF dimension to 4096px
   const MAX_GIF_DIM = 4096;
   const scale = Math.min(SCALE, Math.min(MAX_GIF_DIM / rawW, MAX_GIF_DIM / rawH));
 
@@ -203,7 +225,7 @@ export async function exportGif(
 
   onProgress?.(10);
   const fontCss = await getInlinedFontCss();
-  onProgress?.(20);
+  onProgress?.(15);
 
   const worker = new Worker(
     new URL('./gifWorker.ts', import.meta.url),
@@ -216,6 +238,56 @@ export async function exportGif(
   gsap.globalTimeline.pause();
 
   try {
+    // Phase 1: Go to the end of the animation and generate the global palette
+    // This resolves color quantization flicker and makes text/line details stable
+    gsap.globalTimeline.time(initialTime + duration);
+    const finalSvgStr = serializeFrameSvg(svgElement, canvasW, canvasH, svgW, svgH, fontCss, true);
+    const finalBlob = new Blob([finalSvgStr], { type: 'image/svg+xml;charset=utf-8' });
+    const finalUrl = URL.createObjectURL(finalBlob);
+    const finalImg = new Image();
+    finalImg.width = canvasW;
+    finalImg.height = canvasH;
+
+    const finalImageData = await new Promise<ImageData>((resolve, reject) => {
+      finalImg.onload = async () => {
+        try {
+          if ('decode' in finalImg) {
+            await finalImg.decode();
+          }
+          // Hold on rendering to ensure base64 fonts are parsed and registered by the browser
+          await new Promise((r) => setTimeout(r, 100));
+        } catch (err) {
+          console.warn('Palette frame decode / font loading delay failed:', err);
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d')!;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        if ('textRendering' in ctx) {
+          (ctx as any).textRendering = 'geometricPrecision';
+        }
+        ctx.fillStyle = theme === 'light' ? '#F8FAFC' : '#090B10';
+        ctx.fillRect(0, 0, targetW, targetH);
+        ctx.drawImage(finalImg, Math.round(PADDING * scale), Math.round(PADDING * scale), canvasW, canvasH);
+        
+        URL.revokeObjectURL(finalUrl);
+        resolve(ctx.getImageData(0, 0, targetW, targetH));
+      };
+      finalImg.onerror = (e) => { URL.revokeObjectURL(finalUrl); reject(e); };
+      finalImg.src = finalUrl;
+    });
+
+    worker.postMessage(
+      { type: 'palette', data: finalImageData.data.buffer },
+      [finalImageData.data.buffer]
+    );
+
+    onProgress?.(20);
+
+    // Phase 2: Capture all animation frames sequentially using the global palette
     for (let f = 0; f < frames; f++) {
       const t = (f / frames) * duration;
       gsap.globalTimeline.time(initialTime + t);
@@ -224,20 +296,31 @@ export async function exportGif(
       const blob = new Blob([frameSvgStr], { type: 'image/svg+xml;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const img = new Image();
+      img.width = canvasW;
+      img.height = canvasH;
 
       const imageData = await new Promise<ImageData>((resolve, reject) => {
-        img.onload = () => {
+        img.onload = async () => {
+          try {
+            if ('decode' in img) {
+              await img.decode();
+            }
+          } catch (err) {
+            console.warn('Frame decode failed:', err);
+          }
           const canvas = document.createElement('canvas');
           canvas.width = targetW;
           canvas.height = targetH;
           const ctx = canvas.getContext('2d')!;
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
           if ('textRendering' in ctx) {
-            (ctx as any).textRendering = 'optimizeLegibility';
+            (ctx as any).textRendering = 'geometricPrecision';
           }
           
           ctx.fillStyle = theme === 'light' ? '#F8FAFC' : '#090B10';
           ctx.fillRect(0, 0, targetW, targetH);
-          ctx.drawImage(img, PADDING * scale, PADDING * scale, canvasW, canvasH);
+          ctx.drawImage(img, Math.round(PADDING * scale), Math.round(PADDING * scale), canvasW, canvasH);
           
           URL.revokeObjectURL(url);
           resolve(ctx.getImageData(0, 0, targetW, targetH));
@@ -255,6 +338,8 @@ export async function exportGif(
       onProgress?.(20 + Math.round((f / frames) * 50));
     }
   } finally {
+    // Reset timeline state
+    gsap.globalTimeline.time(initialTime);
     gsap.globalTimeline.play();
   }
 
