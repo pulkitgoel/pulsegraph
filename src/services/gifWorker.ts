@@ -11,6 +11,31 @@ let delay = 0;
 let framesEncoded = 0;
 let globalPalette: any = null;
 
+/**
+ * Downsamples the pixel array to speed up quantization.
+ * Quantizing a large high-resolution frame (e.g. 4096x348 = 1.4M pixels) synchronously
+ * can take 10+ seconds. Sampling ~10,000 pixels is 100x faster and yields a virtually
+ * identical palette for clean diagrams.
+ */
+function getFastPalette(u8: Uint8Array): any {
+  const pixelCount = u8.length / 4;
+  const maxSamples = 10000;
+  const step = Math.max(1, Math.floor(pixelCount / maxSamples));
+  
+  const sampled = new Uint8Array(Math.ceil(pixelCount / step) * 4);
+  let sIdx = 0;
+  for (let i = 0; i < u8.length; i += step * 4) {
+    if (i + 3 < u8.length) {
+      sampled[sIdx] = u8[i];
+      sampled[sIdx + 1] = u8[i + 1];
+      sampled[sIdx + 2] = u8[i + 2];
+      sampled[sIdx + 3] = u8[i + 3];
+      sIdx += 4;
+    }
+  }
+  return quantize(sampled.subarray(0, sIdx), 256, { format: 'rgb565' });
+}
+
 workerSelf.onmessage = (e: MessageEvent) => {
   const msg = e.data;
 
@@ -25,12 +50,12 @@ workerSelf.onmessage = (e: MessageEvent) => {
   } 
   else if (msg.type === 'palette') {
     const u8 = new Uint8Array(msg.data);
-    globalPalette = quantize(u8, 256, { format: 'rgb565' });
+    globalPalette = getFastPalette(u8);
   }
   else if (msg.type === 'frame') {
     if (!gif) return;
     const u8 = new Uint8Array(msg.data);
-    const palette = globalPalette || quantize(u8, 256, { format: 'rgb565' });
+    const palette = globalPalette || getFastPalette(u8);
     const index = applyPalette(u8, palette, { format: 'rgb565' });
     gif.writeFrame(index, width, height, { palette, delay });
     
@@ -49,4 +74,3 @@ workerSelf.onmessage = (e: MessageEvent) => {
     globalPalette = null;
   }
 };
-

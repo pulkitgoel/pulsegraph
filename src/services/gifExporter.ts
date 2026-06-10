@@ -1,8 +1,10 @@
 /**
  * Exports the diagram SVG as a crisp PNG or animated GIF using the browser's
- * native SVG rasterizer with inlined Google Fonts.
+ * native SVG rasterizer with inlined Google Fonts and high resolution scaling.
+ * GIF encoding runs on the main thread with yields to ensure responsive progress.
  */
 import gsap from 'gsap';
+import { GIFEncoder, quantize, applyPalette } from 'gifenc';
 
 async function fetchFontAsDataUri(url: string): Promise<string> {
   const res = await fetch(url);
@@ -53,10 +55,11 @@ async function getInlinedFontCss(): Promise<string> {
 
 function serializeFrameSvg(
   svgElement: HTMLElement,
-  canvasW: number,
-  canvasH: number,
+  targetW: number,
+  targetH: number,
   svgW: number,
   svgH: number,
+  padding: number,
   fontCss: string,
   isGif: boolean
 ): string {
@@ -70,13 +73,33 @@ function serializeFrameSvg(
   // Clear any inline styles that could override width/height attributes
   rootSvg.removeAttribute('style');
 
-  rootSvg.setAttribute('width', canvasW.toString());
-  rootSvg.setAttribute('height', canvasH.toString());
-  rootSvg.setAttribute('viewBox', `0 0 ${svgW} ${svgH}`);
+  // Set pixel dimensions to the FULL target (content + padding, scaled).
+  // The browser rasterises the SVG at exactly these pixel dimensions.
+  rootSvg.setAttribute('width', targetW.toString());
+  rootSvg.setAttribute('height', targetH.toString());
+
+  // Use a 1:1 viewBox to prevent the browser from rasterizing at low viewBox resolution and stretching the bitmap.
+  rootSvg.setAttribute('viewBox', `0 0 ${targetW} ${targetH}`);
+
+  // Scale the content internally in vector space using a wrapper <g>
+  const rawW = svgW + padding * 2;
+  const scale = targetW / rawW;
+  const wrapperG = doc.createElementNS('http://www.w3.org/2000/svg', 'g');
+  wrapperG.setAttribute('transform', `scale(${scale}) translate(${padding}, ${padding})`);
+
+  // Move all content nodes (excluding defs and style) inside the wrapper
+  const children = Array.from(rootSvg.childNodes);
+  for (const child of children) {
+    if (child.nodeName.toLowerCase() !== 'defs' && child.nodeName.toLowerCase() !== 'style') {
+      wrapperG.appendChild(child);
+    }
+  }
+  rootSvg.appendChild(wrapperG);
 
   // Optimize text rendering inside SVG using geometricPrecision
   rootSvg.querySelectorAll('text').forEach((t) => {
     t.setAttribute('text-rendering', 'geometricPrecision');
+    t.setAttribute('shape-rendering', 'geometricPrecision');
   });
 
   // If exporting as GIF, strip heavy filters, glows, and gradients to prevent color quantization blur
@@ -115,6 +138,85 @@ function serializeFrameSvg(
   return serializer.serializeToString(rootSvg);
 }
 
+async function rasterizeSvg(
+  svgStr: string,
+  targetW: number,
+  targetH: number,
+  bgColor: string
+): Promise<ImageData> {
+  const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+
+  const canvas = document.createElement('canvas');
+  canvas.width = targetW;
+  canvas.height = targetH;
+  const ctx = canvas.getContext('2d')!;
+
+  // Fill background first
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, targetW, targetH);
+
+  // Classic Image → Canvas path is used because createImageBitmap often rasterises SVG
+  // Blobs at their base intrinsic resolution first, then upscales the resulting bitmap.
+  const url = URL.createObjectURL(blob);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const img = new Image();
+      // Explicitly set target width and height on the Image element before setting src.
+      // This tells the browser's rasterizer to decode the SVG directly at these pixel dimensions.
+      img.width = targetW;
+      img.height = targetH;
+
+      img.onload = async () => {
+        try {
+          // Ensure the image is fully decoded
+          if ('decode' in img) {
+            await img.decode();
+          }
+          // Brief delay to let base64 fonts register
+          await new Promise((r) => setTimeout(r, 150));
+        } catch { /* proceed */ }
+
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        // 3-arg form: draw at natural size (which matches targetW/H), no bitmap rescaling
+        ctx.drawImage(img, 0, 0);
+        resolve();
+      };
+      img.onerror = (e) => reject(e);
+      img.src = url;
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+
+  return ctx.getImageData(0, 0, targetW, targetH);
+}
+
+/**
+ * Downsamples the pixel array to speed up quantization.
+ * Quantizing a large high-resolution frame (e.g. 4096x348 = 1.4M pixels) synchronously
+ * can take 10+ seconds. Sampling ~10,000 pixels is 100x faster and yields a virtually
+ * identical palette for clean diagrams.
+ */
+function getFastPalette(u8: Uint8Array): any {
+  const pixelCount = u8.length / 4;
+  const maxSamples = 10000;
+  const step = Math.max(1, Math.floor(pixelCount / maxSamples));
+  
+  const sampled = new Uint8Array(Math.ceil(pixelCount / step) * 4);
+  let sIdx = 0;
+  for (let i = 0; i < u8.length; i += step * 4) {
+    if (i + 3 < u8.length) {
+      sampled[sIdx] = u8[i];
+      sampled[sIdx + 1] = u8[i + 1];
+      sampled[sIdx + 2] = u8[i + 2];
+      sampled[sIdx + 3] = u8[i + 3];
+      sIdx += 4;
+    }
+  }
+  return quantize(sampled.subarray(0, sIdx), 256, { format: 'rgb565' });
+}
+
 export async function exportPng(
   svgElement: HTMLElement,
   theme: 'dark' | 'light',
@@ -125,12 +227,10 @@ export async function exportPng(
   const svgW = parseFloat(svgElement.getAttribute('width') || '1000');
   const svgH = parseFloat(svgElement.getAttribute('height') || '1000');
 
-  // Use a 3x resolution scale factor for ultra-crisp output
-  const SCALE = 3.0;
-  const PADDING = 40; // 40px padding around the diagram bounds
+  // 5x vector upscale — the SVG rasteriser handles this in vector space for maximum resolution
+  const SCALE = 5.0;
+  const PADDING = 40; // in original SVG units
 
-  const canvasW = Math.round(svgW * SCALE);
-  const canvasH = Math.round(svgH * SCALE);
   const targetW = Math.round((svgW + PADDING * 2) * SCALE);
   const targetH = Math.round((svgH + PADDING * 2) * SCALE);
 
@@ -138,56 +238,27 @@ export async function exportPng(
   const fontCss = await getInlinedFontCss();
   onProgress?.(60);
 
-  const svgStr = serializeFrameSvg(svgElement, canvasW, canvasH, svgW, svgH, fontCss, false);
+  const svgStr = serializeFrameSvg(
+    svgElement, targetW, targetH, svgW, svgH, PADDING, fontCss, false
+  );
 
   onProgress?.(80);
 
-  const pngUrl = await new Promise<string>((resolve, reject) => {
-    const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-    // Explicitly set width and height properties to force high-DPI rasterization
-    img.width = canvasW;
-    img.height = canvasH;
-    img.onload = async () => {
-      try {
-        if ('decode' in img) {
-          await img.decode();
-        }
-        // Hold on rendering to ensure base64 fonts are parsed and registered by the browser
-        await new Promise((r) => setTimeout(r, 100));
-      } catch (err) {
-        console.warn('Image decode / font loading delay failed:', err);
-      }
+  const bgColor = theme === 'light' ? '#F8FAFC' : '#090B10';
+  const imageData = await rasterizeSvg(svgStr, targetW, targetH, bgColor);
 
-      // Compose onto the final canvas with background and padding
-      const canvas = document.createElement('canvas');
-      canvas.width  = targetW;
-      canvas.height = targetH;
-      const ctx = canvas.getContext('2d')!;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      if ('textRendering' in ctx) {
-        (ctx as any).textRendering = 'geometricPrecision';
-      }
-      
-      // Fill theme background color
-      ctx.fillStyle = theme === 'light' ? '#F8FAFC' : '#090B10';
-      ctx.fillRect(0, 0, targetW, targetH);
-      
-      // Draw diagram at exact scaled dimensions with rounded padding offset
-      const dx = Math.round(PADDING * SCALE);
-      const dy = Math.round(PADDING * SCALE);
-      ctx.drawImage(img, dx, dy, canvasW, canvasH);
-      
-      URL.revokeObjectURL(url);
-      canvas.toBlob((b) => {
-        if (!b) return reject(new Error('canvas.toBlob failed'));
-        resolve(URL.createObjectURL(b));
-      }, 'image/png');
-    };
-    img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
-    img.src = url;
+  // Convert to PNG blob
+  const canvas = document.createElement('canvas');
+  canvas.width = targetW;
+  canvas.height = targetH;
+  const ctx = canvas.getContext('2d')!;
+  ctx.putImageData(imageData, 0, 0);
+
+  const pngUrl = await new Promise<string>((resolve, reject) => {
+    canvas.toBlob((b) => {
+      if (!b) return reject(new Error('canvas.toBlob failed'));
+      resolve(URL.createObjectURL(b));
+    }, 'image/png');
   });
 
   onProgress?.(100);
@@ -205,165 +276,77 @@ export async function exportGif(
   const svgW = parseFloat(svgElement.getAttribute('width') || '1000');
   const svgH = parseFloat(svgElement.getAttribute('height') || '1000');
 
-  // Scale of 3.0x is optimal for high-resolution clarity and crisp rendering
-  const SCALE = 3.0;
+  const SCALE = 5.0;
   const PADDING = 40;
   const rawW = svgW + PADDING * 2;
   const rawH = svgH + PADDING * 2;
-  
+
   // Cap maximum GIF dimension to 4096px
   const MAX_GIF_DIM = 4096;
   const scale = Math.min(SCALE, Math.min(MAX_GIF_DIM / rawW, MAX_GIF_DIM / rawH));
 
-  const canvasW = Math.round(svgW * scale);
-  const canvasH = Math.round(svgH * scale);
   const targetW = Math.round(rawW * scale);
   const targetH = Math.round(rawH * scale);
 
   const fps = 15;
   const frames = fps * duration;
+  const delay = Math.round(1000 / fps);
+  const bgColor = theme === 'light' ? '#F8FAFC' : '#090B10';
 
   onProgress?.(10);
   const fontCss = await getInlinedFontCss();
   onProgress?.(15);
 
-  const worker = new Worker(
-    new URL('./gifWorker.ts', import.meta.url),
-    { type: 'module' }
-  );
-
-  worker.postMessage({ type: 'init', width: targetW, height: targetH, fps, frames });
-
   const initialTime = gsap.globalTimeline.time();
   gsap.globalTimeline.pause();
 
+  const gif = GIFEncoder();
+
   try {
     // Phase 1: Go to the end of the animation and generate the global palette
-    // This resolves color quantization flicker and makes text/line details stable
     gsap.globalTimeline.time(initialTime + duration);
-    const finalSvgStr = serializeFrameSvg(svgElement, canvasW, canvasH, svgW, svgH, fontCss, true);
-    const finalBlob = new Blob([finalSvgStr], { type: 'image/svg+xml;charset=utf-8' });
-    const finalUrl = URL.createObjectURL(finalBlob);
-    const finalImg = new Image();
-    finalImg.width = canvasW;
-    finalImg.height = canvasH;
-
-    const finalImageData = await new Promise<ImageData>((resolve, reject) => {
-      finalImg.onload = async () => {
-        try {
-          if ('decode' in finalImg) {
-            await finalImg.decode();
-          }
-          // Hold on rendering to ensure base64 fonts are parsed and registered by the browser
-          await new Promise((r) => setTimeout(r, 100));
-        } catch (err) {
-          console.warn('Palette frame decode / font loading delay failed:', err);
-        }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = targetW;
-        canvas.height = targetH;
-        const ctx = canvas.getContext('2d')!;
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        if ('textRendering' in ctx) {
-          (ctx as any).textRendering = 'geometricPrecision';
-        }
-        ctx.fillStyle = theme === 'light' ? '#F8FAFC' : '#090B10';
-        ctx.fillRect(0, 0, targetW, targetH);
-        ctx.drawImage(finalImg, Math.round(PADDING * scale), Math.round(PADDING * scale), canvasW, canvasH);
-        
-        URL.revokeObjectURL(finalUrl);
-        resolve(ctx.getImageData(0, 0, targetW, targetH));
-      };
-      finalImg.onerror = (e) => { URL.revokeObjectURL(finalUrl); reject(e); };
-      finalImg.src = finalUrl;
-    });
-
-    worker.postMessage(
-      { type: 'palette', data: finalImageData.data.buffer },
-      [finalImageData.data.buffer]
+    const finalSvgStr = serializeFrameSvg(
+      svgElement, targetW, targetH, svgW, svgH, PADDING, fontCss, true
     );
+    const finalImageData = await rasterizeSvg(finalSvgStr, targetW, targetH, bgColor);
+    const globalPalette = getFastPalette(finalImageData.data);
 
     onProgress?.(20);
 
-    // Phase 2: Capture all animation frames sequentially using the global palette
+    // Phase 2: Capture and encode all animation frames sequentially
     for (let f = 0; f < frames; f++) {
       const t = (f / frames) * duration;
       gsap.globalTimeline.time(initialTime + t);
 
-      const frameSvgStr = serializeFrameSvg(svgElement, canvasW, canvasH, svgW, svgH, fontCss, true);
-      const blob = new Blob([frameSvgStr], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const img = new Image();
-      img.width = canvasW;
-      img.height = canvasH;
-
-      const imageData = await new Promise<ImageData>((resolve, reject) => {
-        img.onload = async () => {
-          try {
-            if ('decode' in img) {
-              await img.decode();
-            }
-          } catch (err) {
-            console.warn('Frame decode failed:', err);
-          }
-          const canvas = document.createElement('canvas');
-          canvas.width = targetW;
-          canvas.height = targetH;
-          const ctx = canvas.getContext('2d')!;
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          if ('textRendering' in ctx) {
-            (ctx as any).textRendering = 'geometricPrecision';
-          }
-          
-          ctx.fillStyle = theme === 'light' ? '#F8FAFC' : '#090B10';
-          ctx.fillRect(0, 0, targetW, targetH);
-          ctx.drawImage(img, Math.round(PADDING * scale), Math.round(PADDING * scale), canvasW, canvasH);
-          
-          URL.revokeObjectURL(url);
-          resolve(ctx.getImageData(0, 0, targetW, targetH));
-        };
-        img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
-        img.src = url;
-      });
-
-      worker.postMessage(
-        { type: 'frame', data: imageData.data.buffer, index: f },
-        [imageData.data.buffer]
+      const frameSvgStr = serializeFrameSvg(
+        svgElement, targetW, targetH, svgW, svgH, PADDING, fontCss, true
       );
+      const imageData = await rasterizeSvg(frameSvgStr, targetW, targetH, bgColor);
 
-      // Map progress from 20% to 70% during frame capturing
-      onProgress?.(20 + Math.round((f / frames) * 50));
+      const u8 = imageData.data;
+      const index = applyPalette(u8, globalPalette, { format: 'rgb565' });
+      gif.writeFrame(index, targetW, targetH, { palette: globalPalette, delay });
+
+      // Yield back to the browser's main thread every 5 frames so that the UI can paint
+      // and update the progress bar smoothly.
+      if (f % 5 === 0) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+
+      // Map progress from 20% to 90% during capturing and encoding
+      onProgress?.(20 + Math.round((f / frames) * 70));
     }
+
+    gif.finish();
+    const bytes = gif.bytes();
+    const blob = new Blob([bytes], { type: 'image/gif' });
+    const url = URL.createObjectURL(blob);
+
+    onProgress?.(100);
+    return url;
   } finally {
     // Reset timeline state
     gsap.globalTimeline.time(initialTime);
     gsap.globalTimeline.play();
   }
-
-  worker.postMessage({ type: 'finish' });
-
-  return new Promise<string>((resolve, reject) => {
-    worker.onmessage = (e) => {
-      const msg = e.data;
-      if (msg.type === 'progress') {
-        // Map progress from 70% to 100% during GIF encoding
-        onProgress?.(70 + Math.round((msg.pct / 100) * 30));
-      } else if (msg.type === 'error') {
-        worker.terminate();
-        reject(new Error(msg.message || 'Worker error'));
-      } else if (msg.type === 'done' && msg.buffer) {
-        worker.terminate();
-        const u8 = new Uint8Array(msg.buffer);
-        const blob = new Blob([u8], { type: 'image/gif' });
-        resolve(URL.createObjectURL(blob));
-      }
-    };
-    worker.onerror = (err) => {
-      worker.terminate();
-      reject(new Error(err.message || 'Worker failed'));
-    };
-  });
 }
