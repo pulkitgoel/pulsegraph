@@ -144,9 +144,9 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
       const cw = containerRef.current.clientWidth;
       const ch = containerRef.current.clientHeight;
       // Calculate scale to fit with padding
-      const scaleX = (cw - 100) / width;
-      const scaleY = (ch - 100) / height;
-      const initialScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.3), 1.5); // Bound between 0.3x and 1.5x
+      const scaleX = (cw - 48) / width;
+      const scaleY = (ch - 48) / height;
+      const initialScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.3), 2.6); // Bound between 0.3x and 2.6x
       
       transform.current = {
         scale: initialScale,
@@ -358,9 +358,9 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
     if (containerRef.current) {
       const cw = containerRef.current.clientWidth;
       const ch = containerRef.current.clientHeight;
-      const scaleX = (cw - 100) / width;
-      const scaleY = (ch - 100) / height;
-      const initialScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.3), 1.5);
+      const scaleX = (cw - 48) / width;
+      const scaleY = (ch - 48) / height;
+      const initialScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.3), 2.6);
       transform.current = {
         scale: initialScale,
         x: (cw - width * initialScale) / 2,

@@ -250,7 +250,11 @@ function wrapLabel(label: string, maxW: number): string[] {
   let cleanLabel = stripEmojis(label);
   cleanLabel = cleanLabel.replace(/\\n/g, '\n').replace(/<br\s*\/?>/g, '\n');
   if (cleanLabel.includes('\n')) {
-    return cleanLabel.split('\n').map(l => l.trim()).slice(0, 5);
+    const ls = cleanLabel.split('\n').map(l => l.trim()).filter(Boolean);
+    // Drop consecutive duplicate lines (guards against "Title<br/>Title" labels).
+    const dd: string[] = [];
+    for (const l of ls) if (!dd.length || dd[dd.length - 1].toLowerCase() !== l.toLowerCase()) dd.push(l);
+    return dd.slice(0, 5);
   }
   const approxChars = Math.floor(maxW / 6.8);
   const plainText = cleanLabel.replace(/<[^>]+>/g, '');
@@ -422,9 +426,11 @@ export function RichDiagramCanvas({ graph, theme = 'dark' }: Props) {
     if (containerRef.current) {
       const cw = containerRef.current.clientWidth;
       const ch = containerRef.current.clientHeight;
-      const scaleX = (cw - 100) / width;
-      const scaleY = (ch - 100) / height;
-      const initialScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.3), 1.5);
+      const scaleX = (cw - 48) / width;
+      const scaleY = (ch - 48) / height;
+      // Allow zooming up to 2.6x so small diagrams fill the viewport (readable
+      // without manual zoom); still clamp so nothing gets absurdly large.
+      const initialScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.3), 2.6);
       
       transform.current = {
         scale: initialScale,
@@ -662,9 +668,11 @@ export function RichDiagramCanvas({ graph, theme = 'dark' }: Props) {
     if (containerRef.current) {
       const cw = containerRef.current.clientWidth;
       const ch = containerRef.current.clientHeight;
-      const scaleX = (cw - 100) / width;
-      const scaleY = (ch - 100) / height;
-      const initialScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.3), 1.5);
+      const scaleX = (cw - 48) / width;
+      const scaleY = (ch - 48) / height;
+      // Allow zooming up to 2.6x so small diagrams fill the viewport (readable
+      // without manual zoom); still clamp so nothing gets absurdly large.
+      const initialScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.3), 2.6);
       transform.current = {
         scale: initialScale,
         x: (cw - width * initialScale) / 2,
@@ -727,15 +735,19 @@ export function RichDiagramCanvas({ graph, theme = 'dark' }: Props) {
             if (!grp.width || !grp.height) return null;
             const gx = (grp.x ?? 0) - (grp.width / 2);
             const gy = (grp.y ?? 0) - (grp.height / 2);
-            const groupBg = theme === 'light' ? 'rgba(15, 23, 42, 0.03)' : 'rgba(255, 255, 255, 0.03)';
-            const groupStroke = theme === 'light' ? 'rgba(15, 23, 42, 0.15)' : 'rgba(255, 255, 255, 0.1)';
-            const groupLabelColor = theme === 'light' ? 'rgba(15, 23, 42, 0.6)' : 'rgba(255, 255, 255, 0.6)';
+            // Colour the zone by its meaning: outputs = emerald, everything else = accent.
+            const isOut = /output/i.test(grp.label);
+            const hue = isOut ? '52, 211, 153' : '129, 140, 248';
+            const groupBg = `rgba(${hue}, ${theme === 'light' ? 0.06 : 0.08})`;
+            const groupStroke = `rgba(${hue}, 0.5)`;
+            const groupLabelColor = isOut ? '#34D399' : '#A5B4FC';
             return (
               <g key={grp.id} id={`group-${grp.id}`}>
-                <rect x={gx} y={gy} width={grp.width} height={grp.height} rx="14"
-                  fill={groupBg} stroke={groupStroke} strokeWidth="1" strokeDasharray="6 4"/>
-                <text x={gx + 16} y={gy + 20} fill={groupLabelColor}
-                  fontSize="12" fontFamily="Inter, system-ui, sans-serif" fontWeight="700" letterSpacing="0.05em">
+                <rect x={gx} y={gy} width={grp.width} height={grp.height} rx="18"
+                  fill={groupBg} stroke={groupStroke} strokeWidth="1.5" strokeDasharray="7 5"/>
+                <text x={gx + 20} y={gy + 26} fill={groupLabelColor}
+                  fontSize="15" fontFamily="Inter, system-ui, sans-serif" fontWeight="800"
+                  letterSpacing="0.12em" style={{ textTransform: 'uppercase' }}>
                   {parseLabel(grp.label)}
                 </text>
               </g>
@@ -767,7 +779,9 @@ export function RichDiagramCanvas({ graph, theme = 'dark' }: Props) {
             return (
               <g key={edge.id}>
                 <path id={`path-${edge.id}`} d={d} fill="none"
-                  stroke={edgeColor} strokeWidth="2.5" markerEnd={`url(#${markerId})`}/>
+                  stroke={edgeColor} strokeWidth="2.5" markerEnd={`url(#${markerId})`}
+                  strokeDasharray={edge.dashed ? '8 6' : undefined}
+                  opacity={edge.dashed ? 0.75 : 1}/>
                 {edge.label && mid && (
                   <g>
                     <rect x={mid.x - 45} y={mid.y - 12} width={90} height={24} rx="6" fill={edgeBg} opacity="0.9" stroke={edgeStroke} strokeWidth="1.5"/>

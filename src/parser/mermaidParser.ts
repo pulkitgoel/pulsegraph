@@ -172,7 +172,10 @@ export function parseMermaid(mermaid: string): Graph {
         from: fromId,
         to: toId,
         label: edgeLabel,
-        isBackEdge: isDashed,
+        dashed: isDashed,
+        // Real cycle/back-edges are detected structurally in the layout engine;
+        // a dashed style no longer implies a back-edge.
+        isBackEdge: false,
         points: [],
       });
       // Register members to current subgraph

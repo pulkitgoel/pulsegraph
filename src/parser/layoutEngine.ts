@@ -43,21 +43,31 @@ export function computeLayout(graph: Graph): Graph {
   const isVertical = (graph.layout || 'LR') === 'TB';
   g.setGraph({
     rankdir: graph.layout || 'LR',
-    marginx: 80,
-    marginy: 80,
-    nodesep: isVertical ? 60 : 80,
-    ranksep: isVertical ? 100 : 160,
-    edgesep: 30,
+    marginx: 40,
+    marginy: 40,
+    // Tighter spacing keeps diagrams compact so text stays a larger fraction of
+    // the exported image (more readable when the image is fit into a window/slide).
+    nodesep: isVertical ? 38 : 42,
+    ranksep: isVertical ? 70 : 60,
+    edgesep: 20,
+    // Align nodes to a consistent up-left grid so the layout looks symmetric
+    // rather than scattered.
+    align: 'UL',
   });
 
-  const nodesWithSize: GraphNode[] = graph.nodes.map((n) => {
-    const dim = getNodeDimensions(n.label);
-    return {
-      ...n,
-      width: n.width || dim.width,
-      height: n.height || dim.height,
-    };
-  });
+  // Uniform box sizes give the grid a clean, symmetric look (like a hand-drawn
+  // diagram) instead of ragged boxes of different sizes. Width is snapped to a
+  // shared value (capped so long labels don't blow it up); height is uniform.
+  const rawDims = graph.nodes.map((n) => ({ n, dim: getNodeDimensions(n.label) }));
+  const uniformHeight = Math.max(NODE_HEIGHT, ...rawDims.map(d => d.n.height || d.dim.height));
+  const widestLabel = Math.max(MIN_WIDTH, ...rawDims.map(d => d.n.width || d.dim.width));
+  const uniformWidth = Math.min(widestLabel, 210); // cap so one long label can't bloat every box
+
+  const nodesWithSize: GraphNode[] = rawDims.map(({ n, dim }) => ({
+    ...n,
+    width: Math.max(n.width || dim.width, uniformWidth),
+    height: uniformHeight,
+  }));
 
   nodesWithSize.forEach((n) => {
     g.setNode(n.id, { width: n.width, height: n.height });
@@ -182,6 +192,31 @@ export function computeLayout(graph: Graph): Graph {
     };
   });
 
+  // Normalize coordinates so content starts at (PAD, PAD) with symmetric margins.
+  // This removes dagre's leftover asymmetric margins and prevents back-edge curves
+  // (which can produce negative coordinates) from being clipped in the export.
+  const PAD_NORM = 40;
+  let nMinX = Infinity, nMinY = Infinity;
+  positionedNodes.forEach(n => {
+    const w = n.width || MIN_WIDTH, h = n.height || NODE_HEIGHT;
+    nMinX = Math.min(nMinX, (n.x || 0) - w / 2);
+    nMinY = Math.min(nMinY, (n.y || 0) - h / 2);
+  });
+  positionedEdges.forEach(e => (e.points || []).forEach(p => {
+    nMinX = Math.min(nMinX, p.x); nMinY = Math.min(nMinY, p.y);
+  }));
+  positionedGroups.forEach(grp => {
+    const w = grp.width || 0, h = grp.height || 0;
+    nMinX = Math.min(nMinX, (grp.x || 0) - w / 2);
+    nMinY = Math.min(nMinY, (grp.y || 0) - h / 2);
+  });
+  if (isFinite(nMinX) && isFinite(nMinY)) {
+    const dx = PAD_NORM - nMinX, dy = PAD_NORM - nMinY;
+    positionedNodes.forEach(n => { n.x = (n.x || 0) + dx; n.y = (n.y || 0) + dy; });
+    positionedEdges.forEach(e => { e.points = (e.points || []).map(p => ({ x: p.x + dx, y: p.y + dy })); });
+    positionedGroups.forEach(grp => { grp.x = (grp.x || 0) + dx; grp.y = (grp.y || 0) + dy; });
+  }
+
   return { ...graph, nodes: positionedNodes, edges: positionedEdges, groups: positionedGroups };
 }
 
@@ -200,9 +235,144 @@ export function getGraphDimensions(graph: Graph): { width: number; height: numbe
       maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
     });
   });
-  // Add padding; ensure SVG viewBox always has room
+  // Content is normalized to start at 40px; add matching 40px on the far side
+  // so padding is symmetric and there is no wasted empty band.
   return {
-    width:  (isFinite(maxX) ? maxX : 600) + 80,
-    height: (isFinite(maxY) ? maxY : 400) + 80,
+    width:  (isFinite(maxX) ? maxX : 600) + 40,
+    height: (isFinite(maxY) ? maxY : 400) + 40,
   };
+}
+
+// ── Role-based Blueprint ──────────────────────────────────────────────────────
+// Places nodes by their MEANING (role), reproducing a hand-designed architecture
+// slide: a lead-in row on the left, the main pipeline in the centre, shared
+// services in a band below, and outputs stacked on the right — each wrapped in a
+// labeled zone. Roles come from the AI (see designPresentation), so the layout is
+// semantic, not just topological.
+export type NodeRole = 'lead-in' | 'pipeline' | 'service' | 'output';
+
+export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>): Graph {
+  const BOX_W = 180, BOX_H = 92, GAP_X = 40, MARGIN = 64;
+  const colStep = BOX_W + GAP_X;
+
+  const nodes: GraphNode[] = graph.nodes.map(n => ({ ...n, width: BOX_W, height: BOX_H, x: 0, y: 0 }));
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const roleOf = (id: string): NodeRole => {
+    const r = roles[id];
+    return (r === 'lead-in' || r === 'pipeline' || r === 'service' || r === 'output') ? r : 'pipeline';
+  };
+
+  const out = new Map<string, string[]>(), inc = new Map<string, string[]>();
+  nodes.forEach(n => { out.set(n.id, []); inc.set(n.id, []); });
+  graph.edges.forEach(e => {
+    if (byId.has(e.from) && byId.has(e.to) && e.from !== e.to) {
+      out.get(e.from)!.push(e.to); inc.get(e.to)!.push(e.from);
+    }
+  });
+
+  // Longest-path level for ordering within a role.
+  const level = new Map<string, number>(); const rem = new Map<string, number>();
+  nodes.forEach(n => rem.set(n.id, inc.get(n.id)!.length));
+  const q: string[] = [];
+  nodes.forEach(n => { if (rem.get(n.id) === 0) { level.set(n.id, 0); q.push(n.id); } });
+  for (let h = 0; h < q.length; h++) {
+    const id = q[h]; const lv = level.get(id) ?? 0;
+    for (const nx of out.get(id)!) {
+      if ((level.get(nx) ?? -1) < lv + 1) level.set(nx, lv + 1);
+      const d = (rem.get(nx) ?? 1) - 1; rem.set(nx, d);
+      if (d === 0) q.push(nx);
+    }
+  }
+  nodes.forEach(n => { if (!level.has(n.id)) level.set(n.id, 0); });
+  const byLv = (a: GraphNode, b: GraphNode) => (level.get(a.id)! - level.get(b.id)!);
+
+  const leadIn = nodes.filter(n => roleOf(n.id) === 'lead-in').sort(byLv);
+  const pipeline = nodes.filter(n => roleOf(n.id) === 'pipeline').sort(byLv);
+  const services = nodes.filter(n => roleOf(n.id) === 'service').sort(byLv);
+  const outputs = nodes.filter(n => roleOf(n.id) === 'output').sort(byLv);
+
+  const PIPE_Y = MARGIN + 46 + BOX_H / 2;
+  // Extra space between zones so their bounding boxes never overlap
+  // (must exceed 2× the zone padding used below).
+  const ZONE_GAP = 80;
+
+  // Main row: lead-in, then pipeline, left→right, with a gap between the zones.
+  let cx = MARGIN;
+  leadIn.forEach(n => { n.x = cx + BOX_W / 2; n.y = PIPE_Y; cx += colStep; });
+  if (leadIn.length && pipeline.length) cx += ZONE_GAP;
+  pipeline.forEach(n => { n.x = cx + BOX_W / 2; n.y = PIPE_Y; cx += colStep; });
+
+  // Outputs: stacked to the right, past a zone gap.
+  if ((leadIn.length + pipeline.length) > 0 && outputs.length) cx += ZONE_GAP;
+  const rightX = cx + BOX_W / 2;
+  const oGap = BOX_H + 24;
+  outputs.forEach((n, j) => { n.x = rightX; n.y = PIPE_Y + (j - (outputs.length - 1) / 2) * oGap; });
+
+  // Services: a band below the pipeline, x near the average of connected nodes.
+  const svcY = PIPE_Y + BOX_H + 130;
+  services.forEach(n => {
+    const nb = [...out.get(n.id)!, ...inc.get(n.id)!].map(id => byId.get(id)).filter(Boolean) as GraphNode[];
+    const avg = nb.length ? nb.reduce((s, m) => s + m.x!, 0) / nb.length : rightX / 2;
+    n.x = avg; n.y = svcY;
+  });
+  // Spread services so they don't overlap.
+  const svcSorted = [...services].sort((a, b) => a.x! - b.x!);
+  for (let i = 1; i < svcSorted.length; i++) {
+    const min = svcSorted[i - 1].x! + colStep;
+    if (svcSorted[i].x! < min) svcSorted[i].x = min;
+  }
+
+  // Orthogonal edges. Same-row edges enter the target's side; vertical edges
+  // exit the source's top/bottom and enter the target's top/bottom (so the
+  // arrowhead is always visible and correctly oriented — even when the target
+  // sits directly above/below the source).
+  const edges: GraphEdge[] = graph.edges.map(e => {
+    const f = byId.get(e.from), t = byId.get(e.to);
+    if (!f || !t) return { ...e, points: [] };
+    const fx = f.x!, fy = f.y!, tx = t.x!, ty = t.y!;
+    if (Math.abs(fy - ty) < 1) {
+      const dir = tx >= fx ? 1 : -1;
+      return { ...e, points: [{ x: fx + dir * BOX_W / 2, y: fy }, { x: tx - dir * BOX_W / 2, y: ty }] };
+    }
+    const down = ty > fy ? 1 : -1;
+    const startY = fy + down * BOX_H / 2;
+    const endY = ty - down * BOX_H / 2;
+    const midY = (startY + endY) / 2;
+    return { ...e, points: [
+      { x: fx, y: startY },
+      { x: fx, y: midY },
+      { x: tx, y: midY },
+      { x: tx, y: endY },
+    ] };
+  });
+
+  // Zone boxes (Client / Backend Pipeline / Outputs) drawn by the canvas.
+  const zoneDefs = [
+    { ids: leadIn, label: 'Client' },
+    { ids: pipeline, label: 'Backend Pipeline' },
+    { ids: outputs, label: 'Outputs' },
+  ];
+  const groups: GraphGroup[] = zoneDefs.filter(z => z.ids.length > 0).map((z, i) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    z.ids.forEach(m => {
+      x0 = Math.min(x0, m.x! - BOX_W / 2); y0 = Math.min(y0, m.y! - BOX_H / 2);
+      x1 = Math.max(x1, m.x! + BOX_W / 2); y1 = Math.max(y1, m.y! + BOX_H / 2);
+    });
+    // Generous side padding + extra room on top for the zone header.
+    const p = 30, topExtra = 26;
+    return { id: 'zone_' + i, label: z.label, members: z.ids.map(m => m.id),
+      x: (x0 + x1) / 2, y: (y0 + y1) / 2 - topExtra / 2,
+      width: (x1 - x0) + 2 * p, height: (y1 - y0) + 2 * p + topExtra };
+  });
+
+  // Normalize so the whole thing starts at (MARGIN, MARGIN).
+  let mnX = Infinity, mnY = Infinity;
+  nodes.forEach(n => { mnX = Math.min(mnX, n.x! - BOX_W / 2); mnY = Math.min(mnY, n.y! - BOX_H / 2); });
+  groups.forEach(g => { mnX = Math.min(mnX, g.x! - g.width! / 2); mnY = Math.min(mnY, g.y! - g.height! / 2); });
+  const dx = MARGIN - mnX, dy = MARGIN - mnY;
+  nodes.forEach(n => { n.x! += dx; n.y! += dy; });
+  edges.forEach(e => { e.points = (e.points || []).map(p => ({ x: p.x + dx, y: p.y + dy })); });
+  groups.forEach(g => { g.x! += dx; g.y! += dy; });
+
+  return { ...graph, nodes, edges, groups, layout: 'LR' };
 }

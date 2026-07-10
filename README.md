@@ -25,9 +25,15 @@ PulseGraph is a premium, chat-first architecture animation tool. It converts nat
   - **Pan & Zoom**: Fluid drag-to-pan and scroll-to-zoom functionality, equipped with UI-based zoom controls (In, Out, Reset).
   - **GSAP Animations**: Continuous micro-animations (spinning load balancers, database scans, pulse markers) and path-following flow animations that simulate live data travel.
 
+- **✨ AI Presentation & ⬇ Export PNG** (two-step workflow):
+  - **Step 1 — AI Presentation**: sends your current diagram to the LLM, which reinterprets it into a clean, *sectioned* architecture layout. The AI assigns every node a semantic **role** — `lead-in` (client/entry), `pipeline` (the core sequential stages), `service` (shared systems the pipeline calls, e.g. a database or an AI gateway), or `output` (terminal artifacts/reports) — and the animated canvas re-lays the diagram by role: entry nodes on the left, the pipeline in one row, services in a band below with dashed "call" edges, outputs stacked on the right.
+  - **Step 2 — Export PNG** (enabled once Step 1 has run): renders the *same* role-based layout through a dedicated static SVG generator (`src/render/blueprintSvg.ts`) styled like a professional architecture slide — light theme, numbered pipeline stages, labeled zone boxes, color-coded service accents — and downloads it as a high-resolution PNG. This is intentionally a separate, static renderer: the clean "designed slide" look is a different aesthetic from the animated glassmorphism canvas, not just a style tweak on top of it.
+  - The **Export PNG** button stays visible but disabled (with an explanatory tooltip) until Step 1 has produced roles for the current diagram — it never appears/disappears, so it's always clear what to do next.
+
 - **Ultra-High-Resolution Exporter (PNG & GIF)**:
   - **Vector-Sharp 5.0x Scaling**: Renders vector-sharp text and borders at 5x target density (capping at 4096px for GIFs).
   - **Wrapper `<g>` Upscaling**: Sets root `viewBox` to exactly match the target output dimensions (`0 0 targetW targetH`). Scales all child elements internally inside a `<g>` wrapper to bypass browser-specific downscaling/stretching rasterization bugs.
+  - **Export frame sizes**: choose how the canvas export is fitted — `fit to content` (tight crop, default), `16:9` / `16:10` / `4:3` (slide aspect ratios), `1:1` (square), or `A4 landscape/portrait` (documents). All use a uniform "contain" scale so the diagram is centred and never stretched.
   - **Main-Thread GIF Encoding**: Offloads encoding directly to the main thread (bypassing Web Worker caching and path resolution bugs) with regular micro-yields (`setTimeout(r, 0)`) to maintain UI responsiveness.
   - **Downsampled Quantization**: Implements a pixel downsampler (`getFastPalette`) that samples at most 10,000 pixels for palette generation, yielding a **100x speedup** (under 2ms) and eliminating encoding lags.
   - Native "Save As" capabilities via the File System Access API.
@@ -90,12 +96,13 @@ PulseGraph parses Mermaid shape syntax to automatically assign beautiful icons a
 
 ## 📁 Project Structure
 
-- `src/services/llmService.ts`: Manages multi-model routing, prompt normalization, and the validation pipeline.
+- `src/services/llmService.ts`: Manages multi-model routing, prompt normalization, and the validation pipeline. Also holds the **AI Presentation** designer prompt (`DESIGN_PROMPT`) and `designPresentation()`, which asks the LLM to reinterpret a diagram and assign each node a layout `role`.
 - `src/parser/mermaidParser.ts`: The recursive AST parser tracking deep subgraph nesting and syntactic edge cases.
-- `src/parser/layoutEngine.ts`: Calculates node, edge, and compound cluster bounds using Dagre.
+- `src/parser/layoutEngine.ts`: Two layout strategies — `computeLayout()` (the default, automatic Dagre layout for every diagram) and `roleBlueprintLayout()` (positions nodes by their AI-assigned semantic role — lead-in / pipeline / service / output — for the AI Presentation view and PNG export).
+- `src/render/blueprintSvg.ts`: `buildBlueprintSvg()` — a standalone, static SVG generator that renders a role-laid-out graph as a clean, presentation-quality architecture slide (light theme, numbered stages, zone boxes). Powers the **Export PNG** button; independent of the animated canvas renderers below.
 - `src/components/DiagramCanvas.tsx`: SVG renderer handling GSAP animations, panning, zooming, and dynamic encapsulation boxes in Classic mode.
 - `src/components/RichDiagramCanvas.tsx`: Modern SVG renderer utilizing custom inline SVG icons, glassmorphism filters, glows, and GSAP micro-animations.
-- `src/services/gifExporter.ts`: Manages the main-thread high-resolution PNG and GIF exporting, including inline font styling and downsampled quantization.
+- `src/services/gifExporter.ts`: Manages the main-thread high-resolution PNG and GIF exporting (including the export frame sizes above), inline font styling, and downsampled quantization.
 
 ## 📄 License
 

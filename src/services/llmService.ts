@@ -44,6 +44,35 @@ OUTPUT RULES:
 - Example: {"mermaidCode": "...", "animationSteps": [["A"], ["B"]], "aiAnimations": {"cssKeyframes": "...", "nodeClasses": {"A": "..."}}}
 - If it's already correct, output it UNCHANGED in the exact same JSON format.`;
 
+// ── Presentation "Designer" — reinterprets a diagram into a polished, sectioned layout ──
+const DESIGN_PROMPT = `You are a senior diagram DESIGNER. You are given an existing Mermaid flowchart. \
+Reinterpret it into a clean, PRESENTATION-QUALITY flowchart that tells the SAME story more clearly — like a slide in an architecture deck.
+
+KEEP THE MEANING: do NOT invent or drop steps. Every node and connection in the input must still be represented. You may rename labels for clarity and re-group, but keep the same components and flow.
+
+MAKE IT LOOK DESIGNED:
+1. Give each node a TWO-LINE label: a short title, then a brief descriptor, using <br/>. Example: API[Backend API<br/>FastAPI]. The two lines MUST be different — never repeat the title as the descriptor. If there is no meaningful descriptor, use a single-line label instead.
+2. Use DASHED edges (-.->) for secondary / asynchronous / AI / side calls, and SOLID edges (-->) for the main data flow. Label key edges with |short text| where it adds clarity.
+3. Apply SEMANTIC fill colors with style directives (one per line): style <id> fill:#hex,stroke:#hex,color:#ffffff.
+   Suggested palette — main flow: #6D3BFF (indigo); AI / LLM nodes: #8B5CF6 (purple); data / storage / outputs: #10B981 (green); deterministic / compute: #14B8A6 (teal); client/user: #1E293B (dark).
+4. Prefer a left-to-right main flow (flowchart LR).
+
+ROLES (CRITICAL — this drives the layout):
+Assign EVERY node a role in a "roles" map (nodeId -> role). Use exactly these four values:
+- "lead-in":  entry / client-side nodes before the core processing (user, browser, frontend, gateway, API). Placed as a row on the left.
+- "pipeline": the core sequential processing stages — the backbone of the flow. Placed together in one row and treated as THE pipeline. Only put the main chain here.
+- "service":  shared/side systems the pipeline calls or reads (AI/LLM gateway, cache, database, config/rules, auth). Placed in a band BELOW the pipeline. Their edges should be dashed.
+- "output":   terminal results / artifacts (reports, files, dashboards, notifications). Placed stacked on the right.
+Every node id that appears in mermaidCode MUST have a role.
+
+STRICT OUTPUT RULES:
+- Output a RAW JSON object ONLY. No markdown fences, no explanation.
+- Exactly four keys: "mermaidCode", "roles", "animationSteps", "aiAnimations".
+- "roles": object mapping every node id to one of lead-in | pipeline | service | output.
+- "animationSteps": array of arrays of node IDs, ordered by flow depth (roots first).
+- "aiAnimations": { "cssKeyframes": "...", "nodeClasses": { "id": "class" } } — add subtle float/pulse/glow to a few hero nodes; may be empty objects/strings.
+- Example: {"mermaidCode":"flowchart LR\\nU((User)) --> API[Backend API<br/>FastAPI]\\nAPI --> P1[Parse<br/>spec]\\nP1 -.-> AI[LLM<br/>gateway]\\nP1 --> R[Report<br/>.docx]\\nstyle API fill:#6D3BFF,stroke:#6D3BFF,color:#ffffff","roles":{"U":"lead-in","API":"lead-in","P1":"pipeline","AI":"service","R":"output"},"animationSteps":[["U"],["API"],["P1"]],"aiAnimations":{"cssKeyframes":"","nodeClasses":{}}}`;
+
 // ── LLM helper ────────────────────────────────────────────────────────────────
 async function callLLM(
   systemPrompt: string,
@@ -100,6 +129,7 @@ export interface SendMessageResult {
   graph: Graph | null;
   mermaidSource: string;
   isOffTopic: boolean;
+  roles?: Record<string, string>; // node id -> role (present for presentation/designer output)
 }
 
 export async function sendMessage(
@@ -190,4 +220,43 @@ export async function sendMessage(
   const msg = `Diagram ready — ${graph.nodes.length} nodes, ${graph.edges.length} connections.`;
 
   return { message: msg, graph, mermaidSource: mermaidFinal, isOffTopic: false };
+}
+
+/**
+ * Reinterprets the current diagram into a polished, sectioned "presentation" layout
+ * (zones, semantic colors, dashed side-calls) using the LLM, then parses it to a Graph.
+ * The caller is responsible for running computeLayout on the returned graph.
+ */
+export async function designPresentation(
+  currentMermaid: string,
+  apiKey: string,
+  provider: LlmProvider,
+  ollamaModel: OllamaModel = 'gemma3:4b',
+  onStep?: (step: 'generating' | 'validating' | 'rendering') => void,
+): Promise<SendMessageResult> {
+  if (!currentMermaid.trim()) {
+    return { message: 'Nothing to redesign yet — generate a diagram first.', graph: null, mermaidSource: '', isOffTopic: true };
+  }
+
+  onStep?.('generating');
+  const raw = await callLLM(DESIGN_PROMPT, currentMermaid, [], apiKey, provider, ollamaModel, 0.35);
+
+  onStep?.('rendering');
+  let parsed: { mermaidCode: string; roles?: Record<string, string>; animationSteps?: string[][]; aiAnimations?: { cssKeyframes: string; nodeClasses: Record<string, string> } };
+  try {
+    const cleanJson = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
+    parsed = JSON.parse(cleanJson);
+  } catch {
+    parsed = { mermaidCode: raw, animationSteps: [], aiAnimations: { cssKeyframes: '', nodeClasses: {} } };
+  }
+
+  const mermaidFinal = (parsed.mermaidCode || '').trim();
+  const graph = parseMermaid(mermaidFinal);
+  if (parsed.animationSteps) graph.animationSteps = parsed.animationSteps;
+  if (parsed.aiAnimations) graph.aiAnimations = parsed.aiAnimations;
+  (graph as Graph & { mermaidSource: string }).mermaidSource = mermaidFinal;
+
+  const roles = parsed.roles && typeof parsed.roles === 'object' ? parsed.roles : undefined;
+  const msg = `Presentation view ready — ${graph.nodes.length} nodes${roles ? ' (role-based layout)' : ''}.`;
+  return { message: msg, graph, mermaidSource: mermaidFinal, isOffTopic: false, roles };
 }

@@ -11,6 +11,7 @@ export interface GraphEdge {
   id: string; from: string; to: string; label?: string;
   points?: { x: number; y: number }[];
   isBackEdge?: boolean;
+  dashed?: boolean; // rendered as a dashed line (e.g. async / AI / side calls)
 }
 export interface GraphGroup {
   id: string; label: string; members: string[];

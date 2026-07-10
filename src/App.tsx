@@ -3,9 +3,10 @@ import { ApiKeyModal } from './components/ApiKeyModal';
 import { ChatPanel } from './components/ChatPanel';
 import { DiagramCanvas } from './components/DiagramCanvas';
 import { RichDiagramCanvas } from './components/RichDiagramCanvas';
-import { sendMessage } from './services/llmService';
-import { exportPng, exportGif } from './services/gifExporter';
-import { computeLayout } from './parser/layoutEngine';
+import { sendMessage, designPresentation } from './services/llmService';
+import { exportPng, exportGif, type ExportFrame } from './services/gifExporter';
+import { computeLayout, roleBlueprintLayout } from './parser/layoutEngine';
+import { buildBlueprintSvg } from './render/blueprintSvg';
 import type { Graph, ChatMessage, LlmProvider, OllamaModel } from './types';
 
 const STORAGE_KEY = 'pulsegraph_deepseek_key';
@@ -44,6 +45,8 @@ export default function App() {
   const [viewMode, setViewMode] = useState<'classic' | 'rich'>('rich');
   const [showChat, setShowChat] = useState(true);
   const [exportType, setExportType] = useState<'png' | 'gif' | null>(null);
+  const [exportFrame, setExportFrame] = useState<ExportFrame>('auto');
+  const [presentationRoles, setPresentationRoles] = useState<Record<string, string> | null>(null);
 
   const canvasContainerRef = useRef<HTMLDivElement>(null);
 
@@ -97,6 +100,9 @@ export default function App() {
           const laid = computeLayout(result.graph);
           setGraph(laid);
           setMermaidSource(result.mermaidSource);
+          // A freshly generated/edited diagram invalidates any previous
+          // Presentation roles — Blueprint PNG must be re-run for this graph.
+          setPresentationRoles(null);
         }
         
         // Always switch to active state to show the chat panel for the response,
@@ -115,6 +121,58 @@ export default function App() {
   );
 
   const handleIdleSubmit = () => { if (input.trim()) submitMessage(input); };
+
+  const handleDesignPresentation = useCallback(async () => {
+    if (!mermaidSource || isLoading) return;
+    setError('');
+    setIsLoading(true);
+    setLoadingStep('generating');
+    try {
+      const result = await designPresentation(mermaidSource, apiKey, provider, ollamaModel, (step) => setLoadingStep(step));
+      if (result.graph && !result.isOffTopic) {
+        // Role-based semantic layout when the AI provided roles; otherwise fall back.
+        const laid = result.roles
+          ? roleBlueprintLayout(result.graph, result.roles)
+          : computeLayout(result.graph);
+        setGraph(laid);
+        setMermaidSource(result.mermaidSource);
+        setViewMode('rich');
+        setPresentationRoles(result.roles ?? null);
+      }
+      setMessages((prev) => [...prev, { id: getId(), role: 'assistant', content: result.message, timestamp: new Date() }]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to redesign diagram';
+      setError(msg);
+    } finally {
+      setIsLoading(false);
+      setLoadingStep(null);
+    }
+  }, [mermaidSource, isLoading, apiKey, provider, ollamaModel]);
+
+  const handleExportBlueprint = useCallback(async () => {
+    if (!graph || !presentationRoles) return;
+    const svg = buildBlueprintSvg(graph, presentationRoles, { title: 'Architecture Flow' });
+    const w = Number(/width="(\d+)"/.exec(svg)?.[1] || 1200);
+    const h = Number(/height="(\d+)"/.exec(svg)?.[1] || 700);
+    const scale = 2;
+
+    const svgUrl = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+    try {
+      const img = new Image();
+      img.width = w * scale; img.height = h * scale;
+      await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; img.src = svgUrl; });
+      const canvas = document.createElement('canvas');
+      canvas.width = w * scale; canvas.height = h * scale;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = '#f7f8fb'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const pngUrl = await new Promise<string>((res) => canvas.toBlob(b => res(URL.createObjectURL(b!)), 'image/png'));
+      const a = document.createElement('a'); a.href = pngUrl; a.download = 'blueprint.png'; a.click();
+      setTimeout(() => URL.revokeObjectURL(pngUrl), 5000);
+    } finally {
+      URL.revokeObjectURL(svgUrl);
+    }
+  }, [graph, presentationRoles]);
 
   const handleExport = async (type: 'png' | 'gif') => {
     if (!graph) return;
@@ -139,8 +197,8 @@ export default function App() {
     setIsExporting(true); setExportProgress(0); setGifUrl(null);
     try {
       const url = type === 'png'
-        ? await exportPng(svgElement, theme, (pct) => setExportProgress(pct))
-        : await exportGif(svgElement, theme, 3, (pct) => setExportProgress(pct));
+        ? await exportPng(svgElement, theme, (pct) => setExportProgress(pct), exportFrame)
+        : await exportGif(svgElement, theme, 3, (pct) => setExportProgress(pct), exportFrame);
       if (fileHandle) {
         const blob = await fetch(url).then((r) => r.blob());
         URL.revokeObjectURL(url);
@@ -188,6 +246,46 @@ export default function App() {
                   <button className={viewMode === 'classic' ? 'active' : ''} onClick={() => setViewMode('classic')}>Classic</button>
                   <button className={viewMode === 'rich' ? 'active' : ''} onClick={() => setViewMode('rich')}>Rich Icons</button>
                 </div>
+              )}
+              {graph && (
+                <div className="presentation-group" title="Two-step: reinterpret the diagram with AI, then export it as a polished slide image">
+                  <button
+                    className="btn-design"
+                    onClick={handleDesignPresentation}
+                    disabled={isLoading}
+                    title="Step 1 — AI reinterprets this diagram into a clean, sectioned architecture layout (zones, colors, labels)"
+                  >
+                    ✨ AI Presentation
+                  </button>
+                  <button
+                    className="btn-design btn-design-export"
+                    onClick={handleExportBlueprint}
+                    disabled={!presentationRoles}
+                    title={
+                      presentationRoles
+                        ? 'Step 2 — download this presentation layout as a polished PNG slide'
+                        : 'Run "AI Presentation" first — this becomes available once that finishes'
+                    }
+                  >
+                    ⬇ Export PNG
+                  </button>
+                </div>
+              )}
+              {graph && (
+                <select
+                  className="frame-select"
+                  value={exportFrame}
+                  onChange={(e) => setExportFrame(e.target.value as ExportFrame)}
+                  title="Export size — how the diagram is fitted into the exported image"
+                >
+                  <option value="auto">Export: fit to content</option>
+                  <option value="16:9">Export: 16:9 (widescreen slide)</option>
+                  <option value="16:10">Export: 16:10 (slide)</option>
+                  <option value="4:3">Export: 4:3 (slide)</option>
+                  <option value="1:1">Export: 1:1 (square)</option>
+                  <option value="a4-landscape">Export: A4 landscape (doc)</option>
+                  <option value="a4-portrait">Export: A4 portrait (doc)</option>
+                </select>
               )}
               {graph && (
                 <button className="btn-mermaid-toggle" onClick={() => setShowChat(!showChat)}>

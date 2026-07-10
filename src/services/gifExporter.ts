@@ -53,13 +53,81 @@ async function getInlinedFontCss(): Promise<string> {
   return cachedFontCss;
 }
 
+export type ExportFrame =
+  | 'auto'
+  | '16:9'
+  | '16:10'
+  | '4:3'
+  | '1:1'
+  | 'a4-landscape'
+  | 'a4-portrait';
+
+const EXPORT_PADDING = 40; // in original SVG units
+
+// Aspect ratios (width : height) for each fixed frame.
+const FRAME_ASPECTS: Record<Exclude<ExportFrame, 'auto'>, [number, number]> = {
+  '16:9': [16, 9],
+  '16:10': [16, 10],
+  '4:3': [4, 3],
+  '1:1': [1, 1],
+  'a4-landscape': [297, 210],
+  'a4-portrait': [210, 297],
+};
+
+/**
+ * Computes the export canvas dimensions and the vector-space transform used to
+ * place the content inside it.
+ *
+ * - 'auto' keeps the old behaviour: the canvas is exactly the content bounds
+ *   (plus padding) upscaled by `maxScale`, so the image is a tight crop.
+ * - '16:9' / '4:3' fit the content into a fixed-aspect frame using a single
+ *   uniform scale (contain) and centre it, filling the rest with the background.
+ *   This is what makes exports "fit in a window" instead of becoming a stretched
+ *   thin strip — the aspect ratio is fixed and scaling is never distorted.
+ */
+function computeExportGeometry(
+  svgW: number,
+  svgH: number,
+  frame: ExportFrame,
+  maxScale: number
+): { targetW: number; targetH: number; transform: string } {
+  const P = EXPORT_PADDING;
+  const rawW = svgW + P * 2;
+  const rawH = svgH + P * 2;
+
+  if (frame === 'auto') {
+    const s = maxScale;
+    return {
+      targetW: Math.round(rawW * s),
+      targetH: Math.round(rawH * s),
+      transform: `scale(${s}) translate(${P}, ${P})`,
+    };
+  }
+
+  // Fixed-aspect frame, high-res base long edge for crisp slides/docs.
+  const BASE_LONG = 2560;
+  const [aw, ah] = FRAME_ASPECTS[frame];
+  // Put BASE_LONG on the longer edge so portrait frames are just as crisp.
+  const frameW = aw >= ah ? BASE_LONG : Math.round((BASE_LONG * aw) / ah);
+  const frameH = aw >= ah ? Math.round((BASE_LONG * ah) / aw) : BASE_LONG;
+
+  // Contain-fit: single uniform scale so nothing is ever distorted.
+  const s = Math.min(frameW / rawW, frameH / rawH);
+  const offX = (frameW - rawW * s) / 2;
+  const offY = (frameH - rawH * s) / 2;
+
+  return {
+    targetW: frameW,
+    targetH: frameH,
+    transform: `translate(${offX}, ${offY}) scale(${s}) translate(${P}, ${P})`,
+  };
+}
+
 function serializeFrameSvg(
   svgElement: HTMLElement,
   targetW: number,
   targetH: number,
-  svgW: number,
-  svgH: number,
-  padding: number,
+  contentTransform: string,
   fontCss: string,
   isGif: boolean
 ): string {
@@ -81,11 +149,9 @@ function serializeFrameSvg(
   // Use a 1:1 viewBox to prevent the browser from rasterizing at low viewBox resolution and stretching the bitmap.
   rootSvg.setAttribute('viewBox', `0 0 ${targetW} ${targetH}`);
 
-  // Scale the content internally in vector space using a wrapper <g>
-  const rawW = svgW + padding * 2;
-  const scale = targetW / rawW;
+  // Scale + position the content internally in vector space using a wrapper <g>.
   const wrapperG = doc.createElementNS('http://www.w3.org/2000/svg', 'g');
-  wrapperG.setAttribute('transform', `scale(${scale}) translate(${padding}, ${padding})`);
+  wrapperG.setAttribute('transform', contentTransform);
 
   // Move all content nodes (excluding defs and style) inside the wrapper
   const children = Array.from(rootSvg.childNodes);
@@ -198,7 +264,7 @@ async function rasterizeSvg(
  * can take 10+ seconds. Sampling ~10,000 pixels is 100x faster and yields a virtually
  * identical palette for clean diagrams.
  */
-function getFastPalette(u8: Uint8Array): any {
+function getFastPalette(u8: Uint8Array | Uint8ClampedArray): any {
   const pixelCount = u8.length / 4;
   const maxSamples = 10000;
   const step = Math.max(1, Math.floor(pixelCount / maxSamples));
@@ -220,7 +286,8 @@ function getFastPalette(u8: Uint8Array): any {
 export async function exportPng(
   svgElement: HTMLElement,
   theme: 'dark' | 'light',
-  onProgress?: (pct: number) => void
+  onProgress?: (pct: number) => void,
+  frame: ExportFrame = 'auto'
 ): Promise<string> {
   onProgress?.(10);
 
@@ -229,17 +296,15 @@ export async function exportPng(
 
   // 5x vector upscale — the SVG rasteriser handles this in vector space for maximum resolution
   const SCALE = 5.0;
-  const PADDING = 40; // in original SVG units
 
-  const targetW = Math.round((svgW + PADDING * 2) * SCALE);
-  const targetH = Math.round((svgH + PADDING * 2) * SCALE);
+  const { targetW, targetH, transform } = computeExportGeometry(svgW, svgH, frame, SCALE);
 
   onProgress?.(30);
   const fontCss = await getInlinedFontCss();
   onProgress?.(60);
 
   const svgStr = serializeFrameSvg(
-    svgElement, targetW, targetH, svgW, svgH, PADDING, fontCss, false
+    svgElement, targetW, targetH, transform, fontCss, false
   );
 
   onProgress?.(80);
@@ -269,24 +334,29 @@ export async function exportGif(
   svgElement: HTMLElement,
   theme: 'dark' | 'light',
   duration: number = 3,
-  onProgress?: (pct: number) => void
+  onProgress?: (pct: number) => void,
+  frame: ExportFrame = 'auto'
 ): Promise<string> {
   onProgress?.(5);
 
   const svgW = parseFloat(svgElement.getAttribute('width') || '1000');
   const svgH = parseFloat(svgElement.getAttribute('height') || '1000');
 
-  const SCALE = 5.0;
-  const PADDING = 40;
-  const rawW = svgW + PADDING * 2;
-  const rawH = svgH + PADDING * 2;
-
-  // Cap maximum GIF dimension to 4096px
+  // Cap so no dimension exceeds 4096px, then compute the fit geometry.
   const MAX_GIF_DIM = 4096;
-  const scale = Math.min(SCALE, Math.min(MAX_GIF_DIM / rawW, MAX_GIF_DIM / rawH));
+  const rawW = svgW + EXPORT_PADDING * 2;
+  const rawH = svgH + EXPORT_PADDING * 2;
+  const SCALE = Math.min(5.0, MAX_GIF_DIM / rawW, MAX_GIF_DIM / rawH);
 
-  const targetW = Math.round(rawW * scale);
-  const targetH = Math.round(rawH * scale);
+  let { targetW, targetH, transform } = computeExportGeometry(svgW, svgH, frame, SCALE);
+
+  // Safety clamp for fixed frames (BASE_LONG is 2560, already < 4096, but guard anyway).
+  if (targetW > MAX_GIF_DIM || targetH > MAX_GIF_DIM) {
+    const k = Math.min(MAX_GIF_DIM / targetW, MAX_GIF_DIM / targetH);
+    targetW = Math.round(targetW * k);
+    targetH = Math.round(targetH * k);
+    transform = `scale(${k}) ${transform}`;
+  }
 
   const fps = 15;
   const frames = fps * duration;
@@ -306,7 +376,7 @@ export async function exportGif(
     // Phase 1: Go to the end of the animation and generate the global palette
     gsap.globalTimeline.time(initialTime + duration);
     const finalSvgStr = serializeFrameSvg(
-      svgElement, targetW, targetH, svgW, svgH, PADDING, fontCss, true
+      svgElement, targetW, targetH, transform, fontCss, true
     );
     const finalImageData = await rasterizeSvg(finalSvgStr, targetW, targetH, bgColor);
     const globalPalette = getFastPalette(finalImageData.data);
@@ -319,7 +389,7 @@ export async function exportGif(
       gsap.globalTimeline.time(initialTime + t);
 
       const frameSvgStr = serializeFrameSvg(
-        svgElement, targetW, targetH, svgW, svgH, PADDING, fontCss, true
+        svgElement, targetW, targetH, transform, fontCss, true
       );
       const imageData = await rasterizeSvg(frameSvgStr, targetW, targetH, bgColor);
 

@@ -778,3 +778,69 @@ body { background: var(--bg); color: var(--text); overflow: hidden; }
   color: var(--accent);
   box-shadow: 0 2px 4px rgba(0,0,0,0.2);
 }
+
+.frame-select {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-right: 1rem;
+  transition: all 0.2s;
+}
+.frame-select:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.frame-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.frame-select option {
+  background: var(--surface-2, #1a1b22);
+  color: var(--text, #e5e7eb);
+}
+
+.presentation-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 1rem;
+}
+
+.btn-design {
+  background: linear-gradient(135deg, #6D3BFF, #9B6BFF);
+  border: none;
+  color: #fff;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(109, 59, 255, 0.35);
+  transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+}
+.btn-design:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(109, 59, 255, 0.5);
+}
+.btn-design:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-design-export {
+  background: linear-gradient(135deg, #10B981, #34D399);
+  box-shadow: 0 2px 10px rgba(16, 185, 129, 0.35);
+}
+.btn-design-export:hover:not(:disabled) {
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.5);
+}
+.btn-design-export:disabled {
+  background: linear-gradient(135deg, #4b5563, #6b7280);
+  box-shadow: none;
+}
