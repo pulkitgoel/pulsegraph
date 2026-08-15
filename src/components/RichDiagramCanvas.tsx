@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import gsap from 'gsap';
 import { MotionPathPlugin } from 'gsap/MotionPathPlugin';
 import type { Graph, NodeType } from '../types';
 import { getGraphDimensions } from '../parser/layoutEngine';
+import { computeLevels } from '../lib/graphLevels';
+import { labelAnchor } from '../lib/edgeLabel';
 
 gsap.registerPlugin(MotionPathPlugin);
 
@@ -19,20 +21,34 @@ const NODE_STYLES_RICH: Record<NodeType, { bg: string; border: string; dot: stri
 };
 
 function RichNodeIcon({ type, label }: { type: NodeType, label?: string }) {
-  const lbl = (label || '').toLowerCase();
-  const isRobot = /(agent|bot|ai|llm|openai|gpt)/i.test(lbl);
-  const isAuth = /(auth|login|security|token|jwt|identity|password|oauth)/i.test(lbl);
-  const isSearch = /(search|query|find|lookup|elasticsearch|algolia)/i.test(lbl);
-  const isEmail = /(mail|email|smtp|sendgrid|ses)/i.test(lbl);
-  const isCloud = /(cloud|aws|azure|gcp|s3|internet|cdn)/i.test(lbl);
-  const isMobile = /(mobile|ios|android|phone|app)/i.test(lbl);
-  const isWeb = /(web|browser|chrome|ui|frontend|react|vue|angular)/i.test(lbl);
-  const isApi = /(api|rest|graphql|http|endpoint|webhook)/i.test(lbl);
-  const isDoc = /(file|document|doc|pdf|storage|bucket)/i.test(lbl);
-  const isPay = /(payment|stripe|checkout|billing|card|money)/i.test(lbl);
-  const isWorker = /(worker|job|task|cron|background|process)/i.test(lbl);
+  // Strip markup so keywords match the words the user actually sees.
+  const lbl = (label || '').replace(/<[^>]+>/g, ' ').toLowerCase();
+  // IMPORTANT: every keyword is wrapped in \b word boundaries. Without them,
+  // "email" matched the AI-robot regex (via "ai"), "App Server" matched the
+  // mobile-phone regex (via "app"), etc. — the source of unrelated icons.
+  const isAuth      = /\b(auth|login|logout|security|token|jwt|identity|password|oauth|sso|iam)\b/.test(lbl);
+  const isPay       = /\b(payment|payments|pay|stripe|paypal|checkout|billing|invoice|card|wallet|money)\b/.test(lbl);
+  const isEmail     = /\b(mail|email|emails|smtp|imap|sendgrid|ses|inbox|newsletter)\b/.test(lbl);
+  const isBell      = /\b(notification|notifications|notify|notifier|alert|alerts|alerting|sms|push|twilio|reminder|webpush)\b/.test(lbl);
+  const isSearch    = /\b(search|query|find|lookup|elasticsearch|elastic|opensearch|algolia|solr|index|indexer)\b/.test(lbl);
+  const isDbKw      = /\b(db|database|postgres|postgresql|mysql|mariadb|mongo|mongodb|sql|nosql|dynamodb|sqlite|cassandra|supabase)\b/.test(lbl);
+  const isCacheKw   = /\b(cache|caching|redis|memcached|valkey)\b/.test(lbl);
+  const isQueueKw   = /\b(queue|queues|kafka|rabbitmq|rabbit|sqs|pubsub|nats|broker|stream|streams|eventbus)\b/.test(lbl);
+  const isRobot     = /\b(agent|agents|bot|chatbot|ai|ml|llm|gpt|openai|claude|gemini|deepseek|model|inference|embedding|embeddings|rag)\b/.test(lbl);
+  const isGit       = /\b(git|github|gitlab|bitbucket|repo|repository|commit|branch|version|vcs)\b/.test(lbl);
+  const isContainer = /\b(docker|kubernetes|k8s|container|containers|pod|pods|cluster|helm|deploy|deployment|registry)\b/.test(lbl);
+  const isChart     = /\b(analytics|metrics|dashboard|dashboards|report|reports|reporting|monitor|monitoring|grafana|prometheus|stats|telemetry|log|logs|logging|kibana|datadog)\b/.test(lbl);
+  const isCloud     = /\b(cloud|aws|azure|gcp|s3|lambda|internet|cdn|cloudflare|edge)\b/.test(lbl);
+  const isMobile    = /\b(mobile|ios|android|phone|smartphone|tablet)\b/.test(lbl);
+  const isWeb       = /\b(web|browser|chrome|firefox|safari|ui|frontend|react|vue|angular|svelte|website|webapp|spa)\b/.test(lbl);
+  const isApi       = /\b(api|apis|rest|graphql|grpc|http|https|endpoint|endpoints|webhook|webhooks)\b/.test(lbl);
+  const isDoc       = /\b(file|files|document|documents|doc|docs|pdf|docx|csv|bucket|upload|uploads|download|export|exports|archive)\b/.test(lbl);
+  const isWorker    = /\b(worker|workers|job|jobs|task|tasks|cron|scheduler|background|batch|pipeline|etl|processor|processing)\b/.test(lbl);
 
-  if (isRobot) {
+  // Specific domains outrank the generic AI icon ("Auth Agent" → lock, not robot).
+  const robotWins = isRobot && !isAuth && !isPay && !isEmail && !isBell && !isSearch && !isDbKw && !isCacheKw && !isQueueKw;
+
+  if (robotWins) {
     return (
       <g transform="translate(0,2) scale(1.1)">
         {/* Head */}
@@ -72,6 +88,43 @@ function RichNodeIcon({ type, label }: { type: NodeType, label?: string }) {
       <rect x="0" y="0" width="24" height="16" rx="2" fill="rgba(245, 158, 11, 0.2)" stroke="#FBBF24" strokeWidth="1.5" />
       <path d="M0,0 L12,10 L24,0" fill="none" stroke="#FBBF24" strokeWidth="1.5" />
       <circle cx="12" cy="10" r="2" fill="#FDE68A" className="led-blink"/>
+    </g>
+  );
+
+  if (isBell) return (
+    <g transform="translate(3,2) scale(1.1)">
+      <path className="bell-swing" d="M9 2 a5 5 0 0 1 5 5 v4 l2.5 3.5 H2.5 L5 11 V7 a5 5 0 0 1 4 -5 z" fill="rgba(250,204,21,0.25)" stroke="#FACC15" strokeWidth="1.5" strokeLinejoin="round"/>
+      <path d="M7 16 a2.2 2.2 0 0 0 4.4 0" fill="none" stroke="#FACC15" strokeWidth="1.5" strokeLinecap="round"/>
+      <circle cx="14.5" cy="3.5" r="2.5" fill="#F87171" className="rich-pulse"/>
+    </g>
+  );
+
+  if (isChart) return (
+    <g transform="translate(2,3) scale(1.1)">
+      <rect x="0" y="0" width="22" height="18" rx="2" fill="rgba(96,165,250,0.15)" stroke="#60A5FA" strokeWidth="1.5"/>
+      <rect x="3" y="10" width="3" height="5" rx="0.5" fill="#34D399" className="bar-grow"/>
+      <rect x="8" y="6" width="3" height="9" rx="0.5" fill="#60A5FA" className="bar-grow"/>
+      <rect x="13" y="3" width="3" height="12" rx="0.5" fill="#A78BFA" className="bar-grow"/>
+      <circle cx="19" cy="4" r="1.5" fill="#FDE68A" className="led-blink"/>
+    </g>
+  );
+
+  if (isGit) return (
+    <g transform="translate(3,2) scale(1.1)">
+      <circle cx="4" cy="4" r="2.5" fill="rgba(251,146,60,0.25)" stroke="#FB923C" strokeWidth="1.5"/>
+      <circle cx="4" cy="18" r="2.5" fill="rgba(251,146,60,0.25)" stroke="#FB923C" strokeWidth="1.5"/>
+      <circle cx="15" cy="11" r="2.5" fill="rgba(251,146,60,0.4)" stroke="#FB923C" strokeWidth="1.5" className="rich-pulse"/>
+      <path d="M4 6.5 V15.5 M4 9 q0 2 4 2 h4.5" fill="none" stroke="#FB923C" strokeWidth="1.5" className="data-flow"/>
+    </g>
+  );
+
+  if (isContainer) return (
+    <g transform="translate(2,3) scale(1.1)">
+      <path d="M2 9 h18 v7 a2 2 0 0 1 -2 2 H4 a2 2 0 0 1 -2 -2 z" fill="rgba(56,189,248,0.2)" stroke="#38BDF8" strokeWidth="1.5"/>
+      <rect x="4" y="3.5" width="4" height="4" rx="0.6" fill="#38BDF8" className="crate-bounce"/>
+      <rect x="9" y="3.5" width="4" height="4" rx="0.6" fill="#7DD3FC" className="crate-bounce"/>
+      <rect x="14" y="3.5" width="4" height="4" rx="0.6" fill="#BAE6FD" className="crate-bounce"/>
+      <circle cx="11" cy="13" r="2" fill="#E0F2FE" className="rich-pulse"/>
     </g>
   );
 
@@ -143,7 +196,11 @@ function RichNodeIcon({ type, label }: { type: NodeType, label?: string }) {
     </g>
   );
 
-  switch (type) {
+  // Keyword-detected storage/cache/queue nodes get the proper icon even when
+  // the Mermaid shape was a plain rectangle.
+  const effType: NodeType = isDbKw ? 'database' : isCacheKw ? 'cache' : isQueueKw ? 'queue' : type;
+
+  switch (effType) {
     case 'database':
       return (
         <g transform="translate(2,4) scale(1.1)">
@@ -320,6 +377,10 @@ export function RichDiagramCanvas({ graph, theme = 'dark' }: Props) {
 
   const { width, height } = getGraphDimensions(graph);
 
+  // Topological levels — pure function of the graph, computed during render
+  // (NOT in an effect) so step badges are present on the very first paint.
+  const nodeLevels = useMemo(() => computeLevels(graph), [graph]);
+
   // --- Flow-based Dynamic Color-Coding ---
   // 1. Calculate in-degrees and build adjacency list
   const inDegreeMap = new Map<string, number>();
@@ -444,44 +505,6 @@ export function RichDiagramCanvas({ graph, theme = 'dark' }: Props) {
   useEffect(() => {
     ctxRef.current?.revert();
     ctxRef.current = gsap.context(() => {
-      const nodeLevels = new Map<string, number>();
-      const inDegree = new Map<string, number>();
-      const adj = new Map<string, string[]>();
-      
-      graph.nodes.forEach(n => { inDegree.set(n.id, 0); adj.set(n.id, []); });
-      graph.edges.forEach(e => {
-        if (!e.isBackEdge) {
-          inDegree.set(e.to, (inDegree.get(e.to) || 0) + 1);
-          adj.get(e.from)?.push(e.to);
-        }
-      });
-      
-      let queue: string[] = [];
-      graph.nodes.forEach(n => { if (inDegree.get(n.id) === 0) queue.push(n.id); });
-      
-      let currentLevel = 0;
-      while (queue.length > 0) {
-        const nextQueue: string[] = [];
-        for (const u of queue) {
-          nodeLevels.set(u, currentLevel);
-          for (const v of (adj.get(u) || [])) {
-            inDegree.set(v, (inDegree.get(v) || 0) - 1);
-            if (inDegree.get(v) === 0) nextQueue.push(v);
-          }
-        }
-        queue = nextQueue;
-        currentLevel++;
-      }
-      
-      // Assign fallback level for cycles or disconnected nodes
-      graph.nodes.forEach(node => {
-        if (!nodeLevels.has(node.id)) {
-          nodeLevels.set(node.id, currentLevel);
-        }
-      });
-      // Store globally on the graph so rendering badges can reuse it!
-      (graph as any).computedLevels = nodeLevels;
-
       (graph.groups || []).forEach(grp => {
         const grpEl = svgRef.current?.getElementById(`group-${grp.id}`);
         if (grpEl) {
@@ -543,6 +566,9 @@ export function RichDiagramCanvas({ graph, theme = 'dark' }: Props) {
         { y: -2, rotation: -30, duration: 0.5, repeat: -1, yoyo: true, ease: 'sine.inOut', transformOrigin: '20.5px 12px' }
       );
       gsap.to('.icon-spin', { rotation: 360, duration: 4, repeat: -1, ease: 'none', transformOrigin: 'center' });
+      gsap.to('.bell-swing', { rotation: 14, duration: 0.45, yoyo: true, repeat: -1, ease: 'sine.inOut', transformOrigin: 'top center' });
+      gsap.fromTo('.bar-grow', { scaleY: 0.55 }, { scaleY: 1, duration: 0.9, yoyo: true, repeat: -1, ease: 'sine.inOut', transformOrigin: 'bottom', stagger: 0.25 });
+      gsap.to('.crate-bounce', { y: -2, duration: 0.7, yoyo: true, repeat: -1, ease: 'sine.inOut', stagger: 0.22 });
       gsap.to('.lock-shackle', {
         repeat: -1,
         keyframes: [
@@ -607,7 +633,7 @@ export function RichDiagramCanvas({ graph, theme = 'dark' }: Props) {
       });
     }, svgRef);
     return () => ctxRef.current?.revert();
-  }, [graph]);
+  }, [graph, nodeLevels]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -771,7 +797,10 @@ export function RichDiagramCanvas({ graph, theme = 'dark' }: Props) {
               }
             }
 
-            const mid = (edge.points ?? [])[ Math.floor((edge.points ?? []).length / 2) ];
+            // Anchor labels near the SOURCE on routed arcs so yes/no sits next
+            // to its decision node instead of floating mid-detour.
+            const mid = labelAnchor(edge.points);
+            const labelW = edge.label ? Math.min(150, Math.max(36, edge.label.length * 6.2 + 16)) : 0;
             const edgeBg = theme === 'light' ? '#FFFFFF' : '#0F172A';
             const edgeStroke = theme === 'light' ? '#E2E8F0' : '#1E293B';
             const edgeText = theme === 'light' ? '#475569' : '#94A3B8';
@@ -784,7 +813,7 @@ export function RichDiagramCanvas({ graph, theme = 'dark' }: Props) {
                   opacity={edge.dashed ? 0.75 : 1}/>
                 {edge.label && mid && (
                   <g>
-                    <rect x={mid.x - 45} y={mid.y - 12} width={90} height={24} rx="6" fill={edgeBg} opacity="0.9" stroke={edgeStroke} strokeWidth="1.5"/>
+                    <rect x={mid.x - labelW / 2} y={mid.y - 12} width={labelW} height={24} rx="6" fill={edgeBg} opacity="0.9" stroke={edgeStroke} strokeWidth="1.5"/>
                     <text x={mid.x} y={mid.y} fill={edgeText}
                       fontSize="10" textAnchor="middle" dominantBaseline="middle"
                       fontFamily="Inter, system-ui, sans-serif" fontWeight="500">{parseLabel(edge.label)}</text>
@@ -808,9 +837,8 @@ export function RichDiagramCanvas({ graph, theme = 'dark' }: Props) {
             const aiClass = graph.aiAnimations?.nodeClasses?.[node.id] || '';
             const textColor = getContrastColor(node.color || st.bg, theme);
             
-            // Use the deterministically computed levels for badges (1-indexed)
-            const computedLevels = (graph as any).computedLevels as Map<string, number> | undefined;
-            const stepNumber = computedLevels && computedLevels.has(node.id) ? computedLevels.get(node.id)! + 1 : null;
+            // Deterministically computed levels for badges (1-indexed)
+            const stepNumber = nodeLevels.has(node.id) ? nodeLevels.get(node.id)! + 1 : null;
 
             return (
               <g key={node.id} transform={`translate(${rx},${ry})`}>

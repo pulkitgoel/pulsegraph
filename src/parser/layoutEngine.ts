@@ -36,8 +36,10 @@ export function getNodeDimensions(label: string): { width: number; height: numbe
 }
 
 export function computeLayout(graph: Graph): Graph {
-  // Enable compound graph for subgraphs/clusters
-  const g = new dagre.graphlib.Graph({ compound: true });
+  // Enable compound graph for subgraphs/clusters; multigraph so parallel
+  // edges (A→B twice with different labels) keep separate geometry instead of
+  // silently overwriting each other.
+  const g = new dagre.graphlib.Graph({ compound: true, multigraph: true });
   g.setDefaultEdgeLabel(() => ({}));
 
   const isVertical = (graph.layout || 'LR') === 'TB';
@@ -109,7 +111,8 @@ export function computeLayout(graph: Graph): Graph {
   graph.nodes.forEach((n) => { if (!visited.has(n.id)) dfs(n.id); });
 
   graph.edges.forEach((e) => {
-    if (!backEdgeIds.has(e.id)) g.setEdge(e.from, e.to, { id: e.id });
+    // Pass e.id as dagre's edge *name* (4th arg) — required for multigraphs.
+    if (!backEdgeIds.has(e.id)) g.setEdge(e.from, e.to, { id: e.id }, e.id);
   });
 
   dagre.layout(g);
@@ -119,15 +122,6 @@ export function computeLayout(graph: Graph): Graph {
     return { ...n, x: nd?.x ?? 0, y: nd?.y ?? 0 };
   });
 
-  let globalMinX = Infinity;
-  let globalMaxY = -Infinity;
-  positionedNodes.forEach(n => {
-     const w = n.width || MIN_WIDTH;
-     const h = n.height || NODE_HEIGHT;
-     globalMinX = Math.min(globalMinX, (n.x || 0) - w/2);
-     globalMaxY = Math.max(globalMaxY, (n.y || 0) + h/2);
-  });
-  
   let backEdgeCount = 0;
 
   const positionedEdges: GraphEdge[] = graph.edges.map((e) => {
@@ -174,7 +168,7 @@ export function computeLayout(graph: Graph): Graph {
     }
 
     try {
-      const ed = g.edge(e.from, e.to);
+      const ed = g.edge(e.from, e.to, e.id);
       return { ...e, points: ed?.points ?? [] };
     } catch {
       return { ...e, points: [] };
@@ -295,21 +289,40 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
   // Extra space between zones so their bounding boxes never overlap
   // (must exceed 2× the zone padding used below).
   const ZONE_GAP = 80;
+  // Long pipelines wrap into serpentine rows so a 9-stage flow doesn't become
+  // a 3000px-wide single row.
+  const MAX_PER_ROW = 5;
+  const ROW_GAP = 110; // vertical corridor between pipeline rows (used for routing)
 
-  // Main row: lead-in, then pipeline, left→right, with a gap between the zones.
+  // Lead-in row on the left.
   let cx = MARGIN;
   leadIn.forEach(n => { n.x = cx + BOX_W / 2; n.y = PIPE_Y; cx += colStep; });
   if (leadIn.length && pipeline.length) cx += ZONE_GAP;
-  pipeline.forEach(n => { n.x = cx + BOX_W / 2; n.y = PIPE_Y; cx += colStep; });
 
-  // Outputs: stacked to the right, past a zone gap.
+  // Pipeline: balanced serpentine rows (odd rows reversed) so consecutive
+  // stages stay adjacent even across a row break.
+  const pipeStartX = cx;
+  const nRows = pipeline.length ? Math.ceil(pipeline.length / MAX_PER_ROW) : 0;
+  const perRow = nRows ? Math.ceil(pipeline.length / nRows) : 0;
+  pipeline.forEach((n, i) => {
+    const r = Math.floor(i / perRow);
+    let c = i % perRow;
+    if (r % 2 === 1) c = perRow - 1 - c;
+    n.x = pipeStartX + c * colStep + BOX_W / 2;
+    n.y = PIPE_Y + r * (BOX_H + ROW_GAP);
+  });
+  if (pipeline.length) cx = pipeStartX + Math.min(pipeline.length, perRow) * colStep;
+  const pipeBottomY = pipeline.length ? PIPE_Y + (nRows - 1) * (BOX_H + ROW_GAP) : PIPE_Y;
+
+  // Outputs: stacked to the right, centred on the pipeline's vertical extent.
   if ((leadIn.length + pipeline.length) > 0 && outputs.length) cx += ZONE_GAP;
   const rightX = cx + BOX_W / 2;
-  const oGap = BOX_H + 24;
-  outputs.forEach((n, j) => { n.x = rightX; n.y = PIPE_Y + (j - (outputs.length - 1) / 2) * oGap; });
+  const oGap = BOX_H + 40;
+  const outCenterY = (PIPE_Y + pipeBottomY) / 2;
+  outputs.forEach((n, j) => { n.x = rightX; n.y = outCenterY + (j - (outputs.length - 1) / 2) * oGap; });
 
-  // Services: a band below the pipeline, x near the average of connected nodes.
-  const svcY = PIPE_Y + BOX_H + 130;
+  // Services: a band below the LAST pipeline row, x near connected nodes.
+  const svcY = pipeBottomY + BOX_H + 130;
   services.forEach(n => {
     const nb = [...out.get(n.id)!, ...inc.get(n.id)!].map(id => byId.get(id)).filter(Boolean) as GraphNode[];
     const avg = nb.length ? nb.reduce((s, m) => s + m.x!, 0) / nb.length : rightX / 2;
@@ -322,28 +335,126 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
     if (svcSorted[i].x! < min) svcSorted[i].x = min;
   }
 
-  // Orthogonal edges. Same-row edges enter the target's side; vertical edges
-  // exit the source's top/bottom and enter the target's top/bottom (so the
-  // arrowhead is always visible and correctly oriented — even when the target
-  // sits directly above/below the source).
+  // ── Collision-aware orthogonal routing ──────────────────────────────────────
+  // A straight segment through another node's box is never acceptable; blocked
+  // routes go around through box-free corridors (row gaps, inter-column
+  // channels, or a lane below everything in the span).
+  const boxes = nodes.map(n => ({
+    id: n.id,
+    x0: n.x! - BOX_W / 2 - 4, x1: n.x! + BOX_W / 2 + 4,
+    y0: n.y! - BOX_H / 2 - 4, y1: n.y! + BOX_H / 2 + 4,
+  }));
+  const clearH = (y: number, xa: number, xb: number, skip: Set<string>) => {
+    const lo = Math.min(xa, xb), hi = Math.max(xa, xb);
+    return !boxes.some(b => !skip.has(b.id) && y > b.y0 && y < b.y1 && hi > b.x0 && lo < b.x1);
+  };
+  const clearV = (x: number, ya: number, yb: number, skip: Set<string>) => {
+    const lo = Math.min(ya, yb), hi = Math.max(ya, yb);
+    return !boxes.some(b => !skip.has(b.id) && x > b.x0 && x < b.x1 && hi > b.y0 && lo < b.y1);
+  };
+  /** Lowest edge of any box inside the horizontal span (for below-all lanes). */
+  const spanBottom = (xa: number, xb: number) => {
+    const lo = Math.min(xa, xb) - BOX_W / 2, hi = Math.max(xa, xb) + BOX_W / 2;
+    let y = -Infinity;
+    boxes.forEach(b => { if (hi > b.x0 && lo < b.x1) y = Math.max(y, b.y1); });
+    return y;
+  };
+  const laneUse = new Map<number, number>(); // stack parallel arcs on shared lanes
+
+  /** Exit a node sideways and find a VERIFIED-clear vertical channel to `lane`
+      (services sit at averaged x, so "half a column over" is not guaranteed clear). */
+  const jogToLane = (nx: number, ny: number, prefDir: number, lane: number, skipSelf: Set<string>) => {
+    for (const dir of [prefDir, -prefDir]) {
+      for (let off = colStep / 2; off <= colStep * 2.5; off += 20) {
+        const chX = nx + dir * off;
+        if (clearH(ny, nx + dir * BOX_W / 2, chX, skipSelf) && clearV(chX, ny, lane, skipSelf)) {
+          return { pts: [{ x: nx + dir * BOX_W / 2, y: ny }, { x: chX, y: ny }], chX };
+        }
+      }
+    }
+    const chX = nx + prefDir * (colStep / 2);
+    return { pts: [{ x: nx + prefDir * BOX_W / 2, y: ny }, { x: chX, y: ny }], chX };
+  };
+  /** Come off `lane` through a verified-clear channel and enter the node's side. */
+  const entryViaChannel = (nx: number, ny: number, prefSide: number, lane: number, skipSelf: Set<string>) => {
+    for (const side of [prefSide, -prefSide]) {
+      for (let off = colStep / 2; off <= colStep * 2.5; off += 20) {
+        const chX = nx - side * off;
+        const dir = nx >= chX ? 1 : -1;
+        if (clearV(chX, lane, ny, skipSelf) && clearH(ny, chX, nx - dir * BOX_W / 2, skipSelf)) {
+          return [{ x: chX, y: lane }, { x: chX, y: ny }, { x: nx - dir * BOX_W / 2, y: ny }];
+        }
+      }
+    }
+    const chX = nx - prefSide * (colStep / 2);
+    return [{ x: chX, y: lane }, { x: chX, y: ny }, { x: nx - prefSide * BOX_W / 2, y: ny }];
+  };
+
   const edges: GraphEdge[] = graph.edges.map(e => {
     const f = byId.get(e.from), t = byId.get(e.to);
     if (!f || !t) return { ...e, points: [] };
     const fx = f.x!, fy = f.y!, tx = t.x!, ty = t.y!;
+    const skip = new Set([f.id, t.id]);
+    const skipF = new Set([f.id]);
+    const skipT = new Set([t.id]);
+
+    // ── Same row ──
     if (Math.abs(fy - ty) < 1) {
       const dir = tx >= fx ? 1 : -1;
-      return { ...e, points: [{ x: fx + dir * BOX_W / 2, y: fy }, { x: tx - dir * BOX_W / 2, y: ty }] };
+      if (clearH(fy, fx + dir * BOX_W / 2, tx - dir * BOX_W / 2, skip)) {
+        return { ...e, points: [{ x: fx + dir * BOX_W / 2, y: fy }, { x: tx - dir * BOX_W / 2, y: ty }] };
+      }
+      // Blocked → arc below everything in the span.
+      let laneY = spanBottom(fx, tx) as number;
+      const key = Math.round(laneY);
+      const k = laneUse.get(key) || 0; laneUse.set(key, k + 1);
+      laneY += 26 + k * 18;
+      const pts: { x: number; y: number }[] = [];
+      if (clearV(fx, fy + BOX_H / 2 + 1, laneY, skipF)) {
+        pts.push({ x: fx, y: fy + BOX_H / 2 }, { x: fx, y: laneY });
+      } else {
+        const j = jogToLane(fx, fy, dir, laneY, skipF);
+        pts.push(...j.pts, { x: j.chX, y: laneY });
+      }
+      if (clearV(tx, ty + BOX_H / 2 + 1, laneY, skipT)) {
+        pts.push({ x: tx, y: laneY }, { x: tx, y: ty + BOX_H / 2 });
+      } else {
+        pts.push(...entryViaChannel(tx, ty, dir, laneY, skipT));
+      }
+      return { ...e, points: pts };
     }
+
+    // ── Different rows ──
     const down = ty > fy ? 1 : -1;
     const startY = fy + down * BOX_H / 2;
     const endY = ty - down * BOX_H / 2;
-    const midY = (startY + endY) / 2;
-    return { ...e, points: [
-      { x: fx, y: startY },
-      { x: fx, y: midY },
-      { x: tx, y: midY },
-      { x: tx, y: endY },
-    ] };
+    // Candidate horizontal lanes: midpoint, the box-free gap just before the
+    // target row, then a lane below everything in the span.
+    const candidates = [(startY + endY) / 2, endY - down * 26];
+    let lane = candidates.find(y => clearH(y, fx, tx, skip));
+    if (lane === undefined) {
+      const key0 = spanBottom(fx, tx) as number;
+      const k = laneUse.get(Math.round(key0)) || 0; laneUse.set(Math.round(key0), k + 1);
+      lane = key0 + 26 + k * 18;
+    }
+    const pts: { x: number; y: number }[] = [];
+    let exitX = fx;
+    const goingToLaneDown = lane > fy ? 1 : -1;
+    if (clearV(fx, fy + goingToLaneDown * BOX_H / 2 + goingToLaneDown, lane, skipF)) {
+      pts.push({ x: fx, y: fy + goingToLaneDown * BOX_H / 2 });
+    } else {
+      const j = jogToLane(fx, fy, tx >= fx ? 1 : -1, lane, skipF);
+      pts.push(...j.pts);
+      exitX = j.chX;
+    }
+    pts.push({ x: exitX, y: lane });
+    const laneToTargetDown = ty > lane ? 1 : -1;
+    if (clearV(tx, lane, ty - laneToTargetDown * BOX_H / 2, skipT)) {
+      pts.push({ x: tx, y: lane }, { x: tx, y: ty - laneToTargetDown * BOX_H / 2 });
+    } else {
+      pts.push(...entryViaChannel(tx, ty, tx >= exitX ? 1 : -1, lane, skipT));
+    }
+    return { ...e, points: pts };
   });
 
   // Zone boxes (Client / Backend Pipeline / Outputs) drawn by the canvas.

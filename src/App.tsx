@@ -7,6 +7,7 @@ import { sendMessage, designPresentation } from './services/llmService';
 import { exportPng, exportGif, type ExportFrame } from './services/gifExporter';
 import { computeLayout, roleBlueprintLayout } from './parser/layoutEngine';
 import { buildBlueprintSvg } from './render/blueprintSvg';
+import { computeLevels, maxLevel } from './lib/graphLevels';
 import type { Graph, ChatMessage, LlmProvider, OllamaModel } from './types';
 
 const STORAGE_KEY = 'pulsegraph_deepseek_key';
@@ -46,6 +47,7 @@ export default function App() {
   const [showChat, setShowChat] = useState(true);
   const [exportType, setExportType] = useState<'png' | 'gif' | null>(null);
   const [exportFrame, setExportFrame] = useState<ExportFrame>('auto');
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const [presentationRoles, setPresentationRoles] = useState<Record<string, string> | null>(null);
 
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -86,7 +88,7 @@ export default function App() {
       setLoadingStep('generating');
 
       try {
-        const result = await sendMessage(userText, messages, { ...graph, mermaidSource } as Graph & { mermaidSource: string }, apiKey, provider, ollamaModel, (step) => setLoadingStep(step));
+        const result = await sendMessage(userText, messages, graph ? { ...graph, mermaidSource } : null, apiKey, provider, ollamaModel, (step) => setLoadingStep(step));
 
         const aiMsg: ChatMessage = {
           id: getId(),
@@ -150,29 +152,46 @@ export default function App() {
   }, [mermaidSource, isLoading, apiKey, provider, ollamaModel]);
 
   const handleExportBlueprint = useCallback(async () => {
-    if (!graph || !presentationRoles) return;
+    if (!graph || !presentationRoles || isExporting) return;
+    setError('');
+    setIsExporting(true);
     const svg = buildBlueprintSvg(graph, presentationRoles, { title: 'Architecture Flow' });
     const w = Number(/width="(\d+)"/.exec(svg)?.[1] || 1200);
     const h = Number(/height="(\d+)"/.exec(svg)?.[1] || 700);
     const scale = 2;
 
-    const svgUrl = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+    // Scale the SVG's pixel dimensions (keeping the original viewBox) so the
+    // browser rasterises directly at target resolution — upscaling the bitmap
+    // afterwards is the blurry path the canvas exporter explicitly avoids.
+    const scaledSvg = svg.replace(
+      `width="${w}" height="${h}"`,
+      `width="${w * scale}" height="${h * scale}"`,
+    );
+
+    const svgUrl = URL.createObjectURL(new Blob([scaledSvg], { type: 'image/svg+xml;charset=utf-8' }));
     try {
       const img = new Image();
-      img.width = w * scale; img.height = h * scale;
-      await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; img.src = svgUrl; });
+      await new Promise<void>((res, rej) => {
+        img.onload = () => res();
+        img.onerror = () => rej(new Error('Could not rasterize the blueprint SVG.'));
+        img.src = svgUrl;
+      });
       const canvas = document.createElement('canvas');
       canvas.width = w * scale; canvas.height = h * scale;
       const ctx = canvas.getContext('2d')!;
       ctx.fillStyle = '#f7f8fb'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      const pngUrl = await new Promise<string>((res) => canvas.toBlob(b => res(URL.createObjectURL(b!)), 'image/png'));
+      ctx.drawImage(img, 0, 0);
+      const pngUrl = await new Promise<string>((res, rej) =>
+        canvas.toBlob(b => (b ? res(URL.createObjectURL(b)) : rej(new Error('canvas.toBlob failed'))), 'image/png'));
       const a = document.createElement('a'); a.href = pngUrl; a.download = 'blueprint.png'; a.click();
       setTimeout(() => URL.revokeObjectURL(pngUrl), 5000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Blueprint PNG export failed');
     } finally {
       URL.revokeObjectURL(svgUrl);
+      setIsExporting(false);
     }
-  }, [graph, presentationRoles]);
+  }, [graph, presentationRoles, isExporting]);
 
   const handleExport = async (type: 'png' | 'gif') => {
     if (!graph) return;
@@ -194,11 +213,14 @@ export default function App() {
         });
       } catch { return; }
     }
-    setIsExporting(true); setExportProgress(0); setGifUrl(null);
+    setIsExporting(true); setExportProgress(0); setGifUrl(null); setError('');
     try {
+      // GIF capture must outlast the entry animation: nodes appear at
+      // level * 0.6s, so deep graphs need a longer loop than shallow ones.
+      const gifDuration = Math.min(12, Math.max(3, maxLevel(computeLevels(graph)) * 0.6 + 2.4));
       const url = type === 'png'
         ? await exportPng(svgElement, theme, (pct) => setExportProgress(pct), exportFrame)
-        : await exportGif(svgElement, theme, 3, (pct) => setExportProgress(pct), exportFrame);
+        : await exportGif(svgElement, theme, gifDuration, (pct) => setExportProgress(pct), exportFrame);
       if (fileHandle) {
         const blob = await fetch(url).then((r) => r.blob());
         URL.revokeObjectURL(url);
@@ -209,7 +231,10 @@ export default function App() {
         setGifUrl(url);
         setTimeout(() => { URL.revokeObjectURL(url); setGifUrl(null); }, 120_000);
       }
-    } catch (err) { console.error(`${type.toUpperCase()} export failed:`, err); }
+    } catch (err) {
+      console.error(`${type.toUpperCase()} export failed:`, err);
+      setError(`${type.toUpperCase()} export failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+    }
     finally { setIsExporting(false); setExportProgress(0); }
   };
 
@@ -232,72 +257,84 @@ export default function App() {
           <span>PulseGraph</span>
         </div>
         <div className="app-header-right">
-          <button className="btn-icon" onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} title="Toggle Theme" style={{ padding: '0.4rem', fontSize: '1.1rem', marginRight: '0.5rem' }}>
+          <button className="btn-icon" onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} title="Toggle theme" style={{ padding: '0.4rem', fontSize: '1.1rem' }}>
             {theme === 'dark' ? '☀️' : '🌙'}
           </button>
-          <div className="active-provider">
+          <div className="active-provider" title={provider === 'deepseek' ? 'AI model: DeepSeek (cloud)' : `AI model: Ollama (local) — ${ollamaModel}`}>
             <span className="provider-dot" style={{ background: provider === 'deepseek' ? '#818CF8' : '#F472B6' }} />
-            {provider === 'deepseek' ? 'DeepSeek' : 'Local Ollama'}
+            {provider === 'deepseek' ? 'DeepSeek' : 'Ollama'}
           </div>
-          {appState === 'active' && (
+          {appState === 'active' && graph && (
             <>
-              {graph && (
-                <div className="view-toggle">
-                  <button className={viewMode === 'classic' ? 'active' : ''} onClick={() => setViewMode('classic')}>Classic</button>
-                  <button className={viewMode === 'rich' ? 'active' : ''} onClick={() => setViewMode('rich')}>Rich Icons</button>
-                </div>
-              )}
-              {graph && (
-                <div className="presentation-group" title="Two-step: reinterpret the diagram with AI, then export it as a polished slide image">
-                  <button
-                    className="btn-design"
-                    onClick={handleDesignPresentation}
-                    disabled={isLoading}
-                    title="Step 1 — AI reinterprets this diagram into a clean, sectioned architecture layout (zones, colors, labels)"
-                  >
-                    ✨ AI Presentation
-                  </button>
-                  <button
-                    className="btn-design btn-design-export"
-                    onClick={handleExportBlueprint}
-                    disabled={!presentationRoles}
-                    title={
-                      presentationRoles
-                        ? 'Step 2 — download this presentation layout as a polished PNG slide'
-                        : 'Run "AI Presentation" first — this becomes available once that finishes'
-                    }
-                  >
-                    ⬇ Export PNG
-                  </button>
-                </div>
-              )}
-              {graph && (
-                <select
-                  className="frame-select"
-                  value={exportFrame}
-                  onChange={(e) => setExportFrame(e.target.value as ExportFrame)}
-                  title="Export size — how the diagram is fitted into the exported image"
+              <div className="view-toggle">
+                <button className={viewMode === 'classic' ? 'active' : ''} onClick={() => setViewMode('classic')}>Classic</button>
+                <button className={viewMode === 'rich' ? 'active' : ''} onClick={() => setViewMode('rich')}>Rich</button>
+              </div>
+              <button
+                className="btn-design"
+                onClick={handleDesignPresentation}
+                disabled={isLoading}
+                title="AI reinterprets this diagram into a clean, sectioned presentation layout — then use Export → Slide PNG"
+              >
+                ✨ AI Presentation
+              </button>
+              <div className="export-menu-wrap">
+                <button
+                  className="btn-export-menu"
+                  onClick={() => setShowExportMenu(v => !v)}
+                  disabled={isExporting}
+                  title="Export the diagram as an image"
                 >
-                  <option value="auto">Export: fit to content</option>
-                  <option value="16:9">Export: 16:9 (widescreen slide)</option>
-                  <option value="16:10">Export: 16:10 (slide)</option>
-                  <option value="4:3">Export: 4:3 (slide)</option>
-                  <option value="1:1">Export: 1:1 (square)</option>
-                  <option value="a4-landscape">Export: A4 landscape (doc)</option>
-                  <option value="a4-portrait">Export: A4 portrait (doc)</option>
-                </select>
-              )}
-              {graph && (
-                <button className="btn-mermaid-toggle" onClick={() => setShowChat(!showChat)}>
-                  {showChat ? 'Hide Chat' : 'Show Chat'}
+                  {isExporting ? `Exporting… ${exportProgress}%` : '⬇ Export'}
                 </button>
-              )}
-              {graph && (
-                <button className="btn-mermaid-toggle" onClick={() => setShowMermaid(!showMermaid)}>
-                  {showMermaid ? 'Hide Code' : '</> Code'}
-                </button>
-              )}
-              <p className="app-tagline">AI-powered architecture animation</p>
+                {showExportMenu && (
+                  <>
+                    <div className="menu-backdrop" onClick={() => setShowExportMenu(false)} />
+                    <div className="export-menu">
+                      <button className="export-menu-item" onClick={() => { setShowExportMenu(false); handleExport('png'); }}>
+                        <span>PNG</span>
+                        <small>hi-res still of the current view</small>
+                      </button>
+                      <button className="export-menu-item" onClick={() => { setShowExportMenu(false); handleExport('gif'); }}>
+                        <span>GIF</span>
+                        <small>animated loop of the diagram</small>
+                      </button>
+                      <button
+                        className="export-menu-item"
+                        disabled={!presentationRoles}
+                        title={presentationRoles ? 'Download the presentation layout as a polished slide' : 'Run ✨ AI Presentation first — this unlocks once it finishes'}
+                        onClick={() => { setShowExportMenu(false); handleExportBlueprint(); }}
+                      >
+                        <span>Slide PNG</span>
+                        <small>{presentationRoles ? 'clean presentation-style slide' : 'run ✨ AI Presentation first'}</small>
+                      </button>
+                      <div className="export-menu-divider" />
+                      <label className="export-menu-label">
+                        Frame size
+                        <select
+                          className="frame-select"
+                          value={exportFrame}
+                          onChange={(e) => setExportFrame(e.target.value as ExportFrame)}
+                        >
+                          <option value="auto">Fit to content</option>
+                          <option value="16:9">16:9 (widescreen slide)</option>
+                          <option value="16:10">16:10 (slide)</option>
+                          <option value="4:3">4:3 (slide)</option>
+                          <option value="1:1">1:1 (square)</option>
+                          <option value="a4-landscape">A4 landscape (doc)</option>
+                          <option value="a4-portrait">A4 portrait (doc)</option>
+                        </select>
+                      </label>
+                    </div>
+                  </>
+                )}
+              </div>
+              <button className="btn-icon" onClick={() => setShowChat(!showChat)} title={showChat ? 'Hide chat panel' : 'Show chat panel'} style={{ padding: '0.4rem 0.55rem' }}>
+                💬
+              </button>
+              <button className="btn-icon" onClick={() => setShowMermaid(!showMermaid)} title={showMermaid ? 'Hide Mermaid source' : 'Show Mermaid source'} style={{ padding: '0.4rem 0.55rem', fontFamily: 'monospace', fontSize: '0.8rem', fontWeight: 700 }}>
+                {'</>'}
+              </button>
             </>
           )}
         </div>
@@ -313,8 +350,6 @@ export default function App() {
             input={input}
             onInputChange={setInput}
             onSubmit={() => submitMessage(input)}
-            onExportGif={() => handleExport('gif')}
-            onExportPng={() => handleExport('png')}
             isExporting={isExporting}
             exportProgress={exportProgress}
             onResetKey={handleResetConfig}
@@ -342,6 +377,14 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* ── Error Toast (app-level: visible in idle AND active states) ── */}
+      {error && appState === 'active' && (
+        <div className="error-toast" role="alert">
+          <span>⚠️ {error}</span>
+          <button className="gif-toast-close" onClick={() => setError('')}>✕</button>
+        </div>
+      )}
 
       {/* ── PNG Ready Toast ── */}
       {gifUrl && (

@@ -9,8 +9,6 @@ interface Props {
   input: string;
   onInputChange: (val: string) => void;
   onSubmit: () => void;
-  onExportGif: () => void;
-  onExportPng: () => void;
   isExporting: boolean;
   exportProgress: number;
   onResetKey: () => void;
@@ -24,7 +22,7 @@ const STEP_LABELS: Record<NonNullable<LoadingStep>, string> = {
 
 export function ChatPanel({
   messages, isLoading, loadingStep, input, onInputChange,
-  onSubmit, onExportGif, onExportPng, isExporting, exportProgress, onResetKey,
+  onSubmit, isExporting, exportProgress, onResetKey,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -42,31 +40,16 @@ export function ChatPanel({
       <div className="chat-toolbar">
         <span className="chat-toolbar-title">
           <span className="chat-toolbar-dot" />
-          Architecture Chat
+          Chat
         </span>
         <div className="chat-toolbar-actions">
-          {isExporting ? (
+          {isExporting && (
             <div className="export-progress">
               <div className="export-progress-bar" style={{ width: `${exportProgress}%` }} />
               <span>Exporting… {exportProgress}%</span>
             </div>
-          ) : (
-            <>
-              <button id="export-png-btn" className="btn-export" onClick={onExportPng} style={{ background: 'rgba(79,172,254,0.1)', borderColor: 'rgba(79,172,254,0.35)', color: '#93C5FD' }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
-                </svg>
-                Export PNG
-              </button>
-              <button id="export-gif-btn" className="btn-export" onClick={onExportGif}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
-                </svg>
-                Export GIF
-              </button>
-            </>
           )}
-          <button id="reset-key-btn" className="btn-icon" onClick={onResetKey} title="Change AI Model / API Key">
+          <button id="reset-key-btn" className="btn-icon" onClick={onResetKey} title="Change AI model / API key">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             </svg>

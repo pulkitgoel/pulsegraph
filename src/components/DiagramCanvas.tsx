@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import gsap from 'gsap';
 import { MotionPathPlugin } from 'gsap/MotionPathPlugin';
 import type { Graph, NodeType } from '../types';
 import { getGraphDimensions } from '../parser/layoutEngine';
+import { computeLevels } from '../lib/graphLevels';
+import { labelAnchor } from '../lib/edgeLabel';
 
 gsap.registerPlugin(MotionPathPlugin);
 
@@ -131,6 +133,10 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
 
   const { width, height } = getGraphDimensions(graph);
 
+  // Topological levels — pure function of the graph, computed during render
+  // (NOT in an effect) so step badges are present on the very first paint.
+  const nodeLevels = useMemo(() => computeLevels(graph), [graph]);
+
   // Apply transform to DOM
   const applyTransform = useCallback(() => {
     if (transformContainerRef.current) {
@@ -160,46 +166,7 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
   useEffect(() => {
     ctxRef.current?.revert();
     ctxRef.current = gsap.context(() => {
-      // 1. Determine animation levels deterministically via BFS
-      const nodeLevels = new Map<string, number>();
-      const inDegree = new Map<string, number>();
-      const adj = new Map<string, string[]>();
-      
-      graph.nodes.forEach(n => { inDegree.set(n.id, 0); adj.set(n.id, []); });
-      graph.edges.forEach(e => {
-        if (!e.isBackEdge) {
-          inDegree.set(e.to, (inDegree.get(e.to) || 0) + 1);
-          adj.get(e.from)?.push(e.to);
-        }
-      });
-      
-      let queue: string[] = [];
-      graph.nodes.forEach(n => { if (inDegree.get(n.id) === 0) queue.push(n.id); });
-      
-      let currentLevel = 0;
-      while (queue.length > 0) {
-        const nextQueue: string[] = [];
-        for (const u of queue) {
-          nodeLevels.set(u, currentLevel);
-          for (const v of (adj.get(u) || [])) {
-            inDegree.set(v, (inDegree.get(v) || 0) - 1);
-            if (inDegree.get(v) === 0) nextQueue.push(v);
-          }
-        }
-        queue = nextQueue;
-        currentLevel++;
-      }
-      
-      // Assign fallback level for cycles or disconnected nodes
-      graph.nodes.forEach(node => {
-        if (!nodeLevels.has(node.id)) {
-          nodeLevels.set(node.id, currentLevel);
-        }
-      });
-      // Store globally on the graph so rendering badges can reuse it!
-      (graph as any).computedLevels = nodeLevels;
-
-      // 2. Animate Subgraph Groups
+      // 1. Animate Subgraph Groups (levels come from the shared memo above)
       (graph.groups || []).forEach(grp => {
         const grpEl = svgRef.current?.getElementById(`group-${grp.id}`);
         if (grpEl) {
@@ -292,7 +259,7 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
 
     }, svgRef);
     return () => ctxRef.current?.revert();
-  }, [graph]);
+  }, [graph, nodeLevels]);
 
   // Mouse event handlers for panning
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -460,7 +427,9 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
             if (!d) return null;
             const src = graph.nodes.find((n) => n.id === edge.from);
             const dotColor = src ? NODE_STYLES[src.type].dot : '#00f2fe';
-            const mid = (edge.points ?? [])[ Math.floor((edge.points ?? []).length / 2) ];
+            // Anchor labels near the SOURCE on routed arcs (see lib/edgeLabel).
+            const mid = labelAnchor(edge.points);
+            const labelW = edge.label ? Math.min(140, Math.max(34, edge.label.length * 5.8 + 14)) : 0;
             return (
               <g key={edge.id}>
                 <path id={`path-${edge.id}`} d={d} fill="none"
@@ -469,7 +438,7 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
                   markerEnd={edge.isBackEdge ? 'url(#arr-b)' : 'url(#arr)'}/>
                 {edge.label && mid && (
                   <g>
-                    <rect x={mid.x - 42} y={mid.y - 9} width={84} height={16} rx="3" fill={isLight ? '#FFFFFF' : '#090B10'} opacity={isLight ? "1" : "0.8"} stroke={isLight ? '#E2E8F0' : 'none'}/>
+                    <rect x={mid.x - labelW / 2} y={mid.y - 9} width={labelW} height={16} rx="3" fill={isLight ? '#FFFFFF' : '#090B10'} opacity={isLight ? "1" : "0.8"} stroke={isLight ? '#E2E8F0' : 'none'}/>
                     <text x={mid.x} y={mid.y} fill={edge.isBackEdge ? (isLight ? '#4F46E5' : '#818CF8') : (isLight ? '#475569' : '#475569')}
                       fontSize="9.5" textAnchor="middle" dominantBaseline="middle"
                       fontFamily="Inter, system-ui, sans-serif">{parseLabel(edge.label)}</text>
@@ -492,9 +461,8 @@ export function DiagramCanvas({ graph, theme = 'dark' }: Props) {
             const startY = h / 2 - ((lines.length - 1) * lineH) / 2;
             const aiClass = graph.aiAnimations?.nodeClasses?.[node.id] || '';
             
-            // Use the deterministically computed levels for badges (1-indexed)
-            const computedLevels = (graph as any).computedLevels as Map<string, number> | undefined;
-            const stepNumber = computedLevels && computedLevels.has(node.id) ? computedLevels.get(node.id)! + 1 : null;
+            // Deterministically computed levels for badges (1-indexed)
+            const stepNumber = nodeLevels.has(node.id) ? nodeLevels.get(node.id)! + 1 : null;
 
             return (
               <g key={node.id} transform={`translate(${rx},${ry})`}>

@@ -7,7 +7,10 @@
  * This is a STATIC vector renderer (no animation) — the price of the clean look.
  */
 import type { Graph, GraphNode } from '../types';
-import { roleBlueprintLayout } from '../parser/layoutEngine';
+// .ts extensions so the node:test suite can import this module directly
+// (allowImportingTsExtensions is enabled; Vite handles it fine).
+import { roleBlueprintLayout } from '../parser/layoutEngine.ts';
+import { labelAnchor } from '../lib/edgeLabel.ts';
 
 const C = {
   bg: '#f7f8fb',
@@ -98,13 +101,21 @@ export function buildBlueprintSvg(
   const numberOf = new Map<string, number>();
   pipeline.forEach((n, i) => numberOf.set(n.id, i + 1));
 
+  // Canvas must cover routed edge arcs too, not just the node boxes.
   const overall = bboxOf(nodes);
-  const width = Math.round(overall.x1 + 60);
-  const height = Math.round(overall.y1 + 74);
+  let maxX = overall.x1, maxY = overall.y1;
+  laid.edges.forEach(e => (e.points || []).forEach(p => {
+    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+  }));
+  const width = Math.round(maxX + 60);
+  const height = Math.round(maxY + 74);
 
   const title = opts?.title || 'Architecture Flow';
+  const stageNames = pipeline.map(n => labelLines(n.label)[0]);
   const subtitle = opts?.subtitle
-    || (pipeline.length ? pipeline.map(n => labelLines(n.label)[0]).join('  →  ') : '');
+    || (stageNames.length
+      ? stageNames.slice(0, 6).join('  →  ') + (stageNames.length > 6 ? '  →  …' : '')
+      : '');
 
   const out: string[] = [];
   out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif">`);
@@ -137,10 +148,23 @@ export function buildBlueprintSvg(
 
   // Edges
   laid.edges.forEach(e => {
-    const d = smoothPath(e.points || []);
+    const pts = e.points || [];
+    const d = smoothPath(pts);
     if (!d) return;
     const dashed = (e as { dashed?: boolean }).dashed;
     out.push(`<path d="${d}" fill="none" stroke="${dashed ? C.dash : C.edge}" stroke-width="${dashed ? 1.6 : 1.8}"${dashed ? ' stroke-dasharray="6 5"' : ''} marker-end="url(#${dashed ? 'bpArwd' : 'bpArw'})"/>`);
+
+    // Edge label — decision flows (yes / no / blocked / retry…) are unreadable
+    // without them. Anchored near the source so the label sits next to the
+    // node that makes the decision, not at a corner of a long routed lane.
+    const anchor = e.label ? labelAnchor(pts) : null;
+    if (e.label && anchor) {
+      const mx = anchor.x, my = anchor.y;
+      const text = e.label.length > 22 ? e.label.slice(0, 21) + '…' : e.label;
+      const pw = Math.max(30, text.length * 5.6 + 12);
+      out.push(`<rect x="${mx - pw / 2}" y="${my - 9}" width="${pw}" height="18" rx="9" fill="#ffffff" stroke="${dashed ? C.dash : C.zoneStroke}" stroke-width="1"/>`);
+      out.push(`<text x="${mx}" y="${my + 3.5}" text-anchor="middle" font-size="9.5" font-weight="600" fill="${dashed ? C.dash : C.muted}">${esc(text)}</text>`);
+    }
   });
 
   // Nodes

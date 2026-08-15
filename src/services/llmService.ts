@@ -1,5 +1,6 @@
 import type { Graph, ChatMessage, LlmProvider, OllamaModel } from '../types';
 import { parseMermaid, looksLikeMermaid } from '../parser/mermaidParser';
+import { sanitizeAiAnimations } from '../lib/sanitizeCss';
 
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
 const OLLAMA_API_URL = 'http://localhost:11434/v1/chat/completions';
@@ -158,14 +159,29 @@ export async function sendMessage(
       };
     }
 
-    // User already gave us supported Mermaid → skip Pass 1, validate directly
+    // User already gave us supported Mermaid. If it parses cleanly, skip BOTH
+    // LLM passes — an extra "validation" round trip costs latency/money and
+    // gives the model licence to rewrite input that was already correct.
+    const direct = parseMermaid(userMessage);
+    if (direct.nodes.length > 0 && !(direct.warnings && direct.warnings.length)) {
+      onStep?.('rendering');
+      direct.mermaidSource = userMessage.trim();
+      return {
+        message: `Diagram ready — ${direct.nodes.length} nodes, ${direct.edges.length} connections.`,
+        graph: direct,
+        mermaidSource: userMessage.trim(),
+        isOffTopic: false,
+      };
+    }
+
+    // Didn't parse cleanly → let the LLM validate/correct it (Pass 2 only).
     mermaidDraft = JSON.stringify({ mermaidCode: userMessage, animationSteps: [], aiAnimations: { cssKeyframes: "", nodeClasses: {} } });
     onStep?.('validating');
   } else {
     onStep?.('generating');
-    // Provide conversation context if refining an existing diagram
-    const contextNote = currentGraph
-      ? `\n\nContext (current diagram Mermaid — refine it based on the request):\n${(currentGraph as Graph & { mermaidSource?: string }).mermaidSource ?? 'see graph JSON'}`
+    // Provide conversation context only when actually refining an existing diagram
+    const contextNote = currentGraph?.mermaidSource
+      ? `\n\nContext (current diagram Mermaid — refine it based on the request):\n${currentGraph.mermaidSource}`
       : '';
     const pass1Input = userMessage + contextNote;
     mermaidDraft = await callLLM(GENERATE_PROMPT, pass1Input, history, apiKey, provider, ollamaModel);
@@ -209,15 +225,17 @@ export async function sendMessage(
   onStep?.('rendering');
   const graph = parseMermaid(mermaidFinal);
   graph.animationSteps = parsedResponse.animationSteps;
-  if (parsedResponse.aiAnimations) {
-    graph.aiAnimations = parsedResponse.aiAnimations;
-  }
+  graph.aiAnimations = sanitizeAiAnimations(parsedResponse.aiAnimations);
 
   // Attach the Mermaid source so App can display it
-  (graph as Graph & { mermaidSource: string }).mermaidSource = mermaidFinal;
+  graph.mermaidSource = mermaidFinal;
 
-  // Build a short human message from node/edge count
-  const msg = `Diagram ready — ${graph.nodes.length} nodes, ${graph.edges.length} connections.`;
+  // Build a short human message from node/edge count (+ any parser warnings)
+  let msg = `Diagram ready — ${graph.nodes.length} nodes, ${graph.edges.length} connections.`;
+  if (graph.warnings && graph.warnings.length) {
+    msg += `\n\n⚠️ ${graph.warnings.length} line(s) couldn't be fully parsed:\n` +
+      graph.warnings.slice(0, 5).map(w => `• ${w}`).join('\n');
+  }
 
   return { message: msg, graph, mermaidSource: mermaidFinal, isOffTopic: false };
 }
@@ -253,8 +271,8 @@ export async function designPresentation(
   const mermaidFinal = (parsed.mermaidCode || '').trim();
   const graph = parseMermaid(mermaidFinal);
   if (parsed.animationSteps) graph.animationSteps = parsed.animationSteps;
-  if (parsed.aiAnimations) graph.aiAnimations = parsed.aiAnimations;
-  (graph as Graph & { mermaidSource: string }).mermaidSource = mermaidFinal;
+  graph.aiAnimations = sanitizeAiAnimations(parsed.aiAnimations);
+  graph.mermaidSource = mermaidFinal;
 
   const roles = parsed.roles && typeof parsed.roles === 'object' ? parsed.roles : undefined;
   const msg = `Presentation view ready — ${graph.nodes.length} nodes${roles ? ' (role-based layout)' : ''}.`;

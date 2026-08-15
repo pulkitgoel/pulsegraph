@@ -49,10 +49,15 @@ renderer with a style flag. Getting the professional look required a
 dedicated static SVG generator — see the design-agent conversation history
 (2026-07-09/10) if you need the reasoning trail.
 
-**UX rule**: the Export PNG button must always be visible once a graph
-exists, `disabled` (not hidden) until `presentationRoles` is set, with a
+**UX rule**: the blueprint export ("Slide PNG") must always be visible once a
+graph exists, `disabled` (not hidden) until `presentationRoles` is set, with a
 tooltip explaining why. Do not make it appear/disappear — that was a source
 of user confusion before the 2026-07-10 simplification.
+**2026-08-16 header cleanup**: all exports now live in one "⬇ Export" dropdown
+in the header (PNG / GIF / Slide PNG + frame-size select). The Slide PNG menu
+item follows the same disabled-not-hidden rule. Do not re-add separate export
+buttons to the chat panel or header — two different "Export PNG" buttons at
+once was the confusion this fixed.
 
 **Stale-roles gotcha**: `presentationRoles` must be reset to `null` whenever
 a *new* diagram is generated via chat (`submitMessage`) — otherwise Export

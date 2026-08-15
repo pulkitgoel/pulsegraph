@@ -27,6 +27,10 @@ export interface Graph {
     cssKeyframes: string;
     nodeClasses: Record<string, string>;
   };
+  /** The Mermaid source this graph was parsed from (attached by llmService). */
+  mermaidSource?: string;
+  /** Human-readable notes about lines/tokens the parser could not understand. */
+  warnings?: string[];
 }
 export interface ChatMessage {
   id: string; role: 'user' | 'assistant';

@@ -16,10 +16,10 @@ PulseGraph is a premium, chat-first architecture animation tool. It converts nat
   - **Cloud (High Capability)**: Support for **DeepSeek** cloud API for handling exceptionally complex logic.
   - Features an intuitive UI toggle to switch between providers/models seamlessly.
   
-- **Universal Lexer Engine & AST Parser**:
-  - A robust, custom recursive parser that maps complex Mermaid syntax to a highly interactive UI.
-  - Supports **infinitely nested subgraphs**, HTML line breaks (`<br/>`), and various arrow pathings (e.g., dashed `-.->` paths).
-  - Built over Dagre's compound layout engine, ensuring parent groups precisely encapsulate their nested children without overlapping.
+- **Deterministic Mermaid Parser** (`src/parser/mermaidParser.ts`):
+  - A tokenizing parser that handles chained edges (`A --> B --> C`), multi-node shorthand (`A & B --> C`), both edge-label forms (`-->|x|` and `-- x -->`), open links (`---`), cross/circle arrowheads (`--x`, `--o`), dashed `-.->` paths, and **infinitely nested subgraphs** with HTML line breaks (`<br/>`).
+  - Identical repeated edges are de-duplicated; anything the parser cannot understand is reported in `Graph.warnings` (surfaced in the chat) instead of silently producing garbage nodes.
+  - Built over Dagre's compound **multigraph** layout, so parallel edges with different labels keep separate routes and parent groups precisely encapsulate their nested children without overlapping.
 
 - **Interactive Glowing Canvas**:
   - **Pan & Zoom**: Fluid drag-to-pan and scroll-to-zoom functionality, equipped with UI-based zoom controls (In, Out, Reset).
@@ -43,7 +43,8 @@ PulseGraph is a premium, chat-first architecture animation tool. It converts nat
 - **Frontend**: React 19, TypeScript, Vite
 - **Animations & Layout**: GSAP (MotionPathPlugin), Dagre (Compound Graphs)
 - **AI Integration**: DeepSeek (Cloud), Ollama (Local)
-- **GIF/PNG Rendering**: `html-to-image` (fallback), custom native SVG-to-canvas rendering with `gifenc` (main-thread execution)
+- **GIF/PNG Rendering**: custom native SVG-to-canvas rendering with `gifenc` (main-thread execution)
+- **Tests**: dependency-free `node:test` suite over the Mermaid parser, level computation, and CSS sanitizer — run with `npm test`
 
 ## 🚀 Getting Started
 
