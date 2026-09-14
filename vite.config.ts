@@ -15,6 +15,11 @@ const policy = [
 ].join('; ');
 
 export default defineConfig(({ command }) => ({
+  // GitHub Pages serves this project from https://<user>.github.io/pulsegraph/,
+  // so the built asset URLs need that prefix. Only the Pages workflow sets
+  // GITHUB_PAGES, which leaves dev, preview and the Playwright suite serving
+  // from the root exactly as before.
+  base: process.env.GITHUB_PAGES ? '/pulsegraph/' : '/',
   plugins: [
     react(),
     {
