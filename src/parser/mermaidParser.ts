@@ -11,10 +11,58 @@
  */
 import type { Graph, GraphNode, GraphEdge, GraphGroup, NodeType } from '../types';
 
+/** Protect quoted labels and shapes from operator/statement tokenization. */
+function protect(source: string): { text: string; restore: (s: string) => string } {
+  const saved: string[] = [];
+  let text = '',
+    i = 0;
+  while (i < source.length) {
+    const start = i;
+    const first = source[i];
+    if (first === '|') {
+      const end = source.indexOf('|', i + 1);
+      if (end !== -1) {
+        saved.push(source.slice(i + 1, end));
+        text += '|' + '\uE000' + (saved.length - 1) + '\uE001' + '|';
+        i = end + 1;
+        continue;
+      }
+    }
+    if ('[({'.includes(first) || first === '"' || first === "'") {
+      const stack: string[] = [];
+      let quote = '';
+      if (first === '"' || first === "'") {
+        quote = first;
+        i++;
+      }
+      do {
+        const c = source[i];
+        if (quote) {
+          if (c === quote && source[i - 1] !== '\\') quote = '';
+        } else if (c === '"' || c === "'") quote = c;
+        else if ('[({'.includes(c)) stack.push(c);
+        else if ('])}'.includes(c)) stack.pop();
+        i++;
+      } while (i < source.length && (stack.length || quote));
+      saved.push(source.slice(start, i));
+      text += '\uE000' + (saved.length - 1) + '\uE001';
+    } else {
+      text += first;
+      i++;
+    }
+  }
+  return {
+    text,
+    restore: (s) => s.replace(/\uE000(\d+)\uE001/g, (_, n: string) => saved[Number(n)]),
+  };
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 let _edgeIdx = 0;
-function eid() { return `e_${++_edgeIdx}`; }
+function eid() {
+  return `e_${++_edgeIdx}`;
+}
 
 /** Strip outer quotes from a string */
 function unquote(s: string) {
@@ -27,15 +75,15 @@ function unquote(s: string) {
  */
 function shapeToType(open: string, close: string): NodeType {
   const sig = open + close;
-  if (sig === '((' + '))') return 'user';          // circle
-  if (open === '[(') return 'database';            // cylinder
+  if (sig === '((' + '))') return 'user'; // circle
+  if (open === '[(') return 'database'; // cylinder
   if (sig === '[/' + '/]' || sig === '[/' + ']') return 'cache'; // parallelogram
-  if (sig === '[[' + ']]') return 'loadbalancer';  // subroutine
-  if (sig === '[' + ']') return 'service';         // rectangle (default)
-  if (sig === '(' + ')') return 'client';          // rounded
-  if (sig === '{{' + '}}') return 'gateway';       // hexagon
-  if (sig === '{' + '}') return 'gateway';         // diamond
-  if (open === '>') return 'queue';                // asymmetric
+  if (sig === '[[' + ']]') return 'loadbalancer'; // subroutine
+  if (sig === '[' + ']') return 'service'; // rectangle (default)
+  if (sig === '(' + ')') return 'client'; // rounded
+  if (sig === '{{' + '}}') return 'gateway'; // hexagon
+  if (sig === '{' + '}') return 'gateway'; // diamond
+  if (open === '>') return 'queue'; // asymmetric
   return 'service';
 }
 
@@ -53,16 +101,32 @@ function parseNodeToken(
   nodeMap: Map<string, GraphNode>,
   warnings: string[],
 ): string {
-  token = token.trim()
-    .replace(/:::[\w-]+$/, '')   // strip :::className
-    .replace(/\s+<$/, '');       // strip stray reverse-arrowhead remnant (A <--> B)
+  token = token
+    .trim()
+    .replace(/:::[\w-]+$/, '') // strip :::className
+    .replace(/\s+<$/, ''); // strip stray reverse-arrowhead remnant (A <--> B)
   const m = NODE_DEF_RE.exec(token);
   if (m) {
+    const closing: Record<string, string> = {
+      '[': ']',
+      '(': ')',
+      '{': '}',
+      '[[': ']]',
+      '[(': ')]',
+      '[/': '/]',
+      '((': '))',
+      '{{': '}}',
+      '>': ']',
+    };
+    if (closing[m[2]] !== m[4]) {
+      warnings.push('Mismatched node shape: ' + token);
+      return '';
+    }
     const rawId = m[1].trim();
-    const open  = m[2];
+    const open = m[2];
     const label = unquote(m[3]);
     const close = m[4];
-    const type  = shapeToType(open, close);
+    const type = shapeToType(open, close);
     if (!nodeMap.has(rawId)) {
       nodeMap.set(rawId, { id: rawId, label: label || rawId, type, width: 0, height: 0 });
     } else {
@@ -78,17 +142,18 @@ function parseNodeToken(
   }
   if (PLAIN_ID_RE.test(token)) {
     if (!nodeMap.has(token)) {
-      nodeMap.set(token, { id: token, label: token, type: 'service', width: 0, height: 0 });
+      nodeMap.set(token, {
+        id: token,
+        label: token,
+        type: 'service',
+        width: 0,
+        height: 0,
+      });
     }
     return token;
   }
-  // Malformed token — keep the diagram rendering with a sanitized id, but warn.
-  const fallbackId = token.replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '') || `n_${nodeMap.size + 1}`;
-  warnings.push(`Could not parse node "${token}" — rendered as "${fallbackId}".`);
-  if (!nodeMap.has(fallbackId)) {
-    nodeMap.set(fallbackId, { id: fallbackId, label: token, type: 'service', width: 0, height: 0 });
-  }
-  return fallbackId;
+  warnings.push('Could not parse node: ' + token);
+  return '';
 }
 
 // ── Edge line tokenizer ───────────────────────────────────────────────────────
@@ -117,24 +182,37 @@ function normalizeInlineLabels(s: string): string {
   return s
     .replace(/(?<!-)-\.\s+(.+?)\s+\.->/g, (_m, txt) => `-.->|${txt.trim()}|`)
     .replace(/(?<![=-])={2}\s+(.+?)\s+={2}>/g, (_m, txt) => `==>|${txt.trim()}|`)
-    .replace(/(?<!-)-{2}\s+(.+?)\s+-{2}([>xo])/g, (_m, txt, arrow) => `--${arrow}|${txt.trim()}|`);
+    .replace(
+      /(?<!-)-{2}\s+(.+?)\s+-{2}([>xo])/g,
+      (_m, txt, arrow) => `--${arrow}|${txt.trim()}|`,
+    );
 }
 
 /** Split a node segment on top-level `&` (multi-node shorthand). */
 function splitAmp(seg: string): string[] {
   const out: string[] = [];
-  let depth = 0, cur = '';
+  let depth = 0,
+    cur = '';
   for (const ch of seg) {
     if ('[({'.includes(ch)) depth++;
     else if ('])}'.includes(ch)) depth = Math.max(0, depth - 1);
-    if (ch === '&' && depth === 0) { out.push(cur); cur = ''; }
-    else cur += ch;
+    if (ch === '&' && depth === 0) {
+      out.push(cur);
+      cur = '';
+    } else cur += ch;
   }
   out.push(cur);
-  return out.map(t => t.trim()).filter(Boolean);
+  return out.map((t) => t.trim()).filter(Boolean);
 }
 
-interface ParsedEdge { fromIds: string[]; toIds: string[]; label: string; isDashed: boolean }
+interface ParsedEdge {
+  fromIds: string[];
+  toIds: string[];
+  label: string;
+  isDashed: boolean;
+  arrow: 'arrow' | 'none' | 'cross' | 'circle';
+  thick: boolean;
+}
 
 /**
  * Parse a full edge line into 1+ edges. Returns null if the line contains no
@@ -145,7 +223,8 @@ function parseEdgeLine(
   nodeMap: Map<string, GraphNode>,
   warnings: string[],
 ): ParsedEdge[] | null {
-  const s = normalizeInlineLabels(line.trim().replace(/;$/, ''));
+  const protectedLine = protect(line.trim().replace(/;$/, ''));
+  const s = normalizeInlineLabels(protectedLine.text);
   if (!hasLink(s)) return null;
 
   // split() with a capturing group alternates [seg, op, seg, op, seg, ...]
@@ -160,13 +239,35 @@ function parseEdgeLine(
     let label = '';
     // A pipe label directly after the operator belongs to the incoming edge.
     const lm = /^\|([^|]*)\|\s*/.exec(seg);
-    if (lm) { label = lm[1].trim(); seg = seg.slice(lm[0].length).trim(); }
-    if (!seg) { prevIds = null; continue; }
+    if (lm) {
+      label = unquote(protectedLine.restore(lm[1].trim()));
+      seg = seg.slice(lm[0].length).trim();
+    }
+    if (!seg) {
+      warnings.push('An edge is missing a source or target node.');
+      prevIds = null;
+      continue;
+    }
 
-    const ids = splitAmp(seg).map(t => parseNodeToken(t, nodeMap, warnings));
+    const ids = splitAmp(seg)
+      .map((t) => parseNodeToken(protectedLine.restore(t), nodeMap, warnings))
+      .filter(Boolean);
     if (prevIds && ids.length) {
       const op = parts[i - 1] ?? '';
-      results.push({ fromIds: prevIds, toIds: ids, label, isDashed: op.includes('.') });
+      results.push({
+        fromIds: prevIds,
+        toIds: ids,
+        label,
+        isDashed: op.includes('.'),
+        arrow: op.endsWith('x')
+          ? 'cross'
+          : op.endsWith('o')
+            ? 'circle'
+            : op.endsWith('>')
+              ? 'arrow'
+              : 'none',
+        thick: op.includes('='),
+      });
     }
     prevIds = ids.length ? ids : null;
   }
@@ -177,12 +278,24 @@ function parseEdgeLine(
 export function parseMermaid(mermaid: string): Graph {
   _edgeIdx = 0;
 
-  const lines = mermaid
+  if (mermaid.length > 30_000)
+    throw new Error('Diagram source exceeds 30,000 characters.');
+  const shield = protect(
+    mermaid
+      .trim()
+      .replace(/^\x60\x60\x60(?:mermaid)?\s*/i, '')
+      .replace(/\s*\x60\x60\x60$/, ''),
+  );
+  const lines = shield.text
     .split('\n')
+    .map((line) => line.replace(/%%.*$/, ''))
+    .join('\n')
+    .split(/[;\n]/)
+    .map(shield.restore)
     .map((l) => l.trim())
     .filter(Boolean);
 
-  let layout: 'LR' | 'TB' = 'LR';
+  let layout: 'LR' | 'TB' | 'RL' | 'BT' = 'LR';
   const nodeMap = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
   const groups: GraphGroup[] = [];
@@ -194,8 +307,16 @@ export function parseMermaid(mermaid: string): Graph {
   if (/flowchart\s+(TB|TD|BT)|graph\s+(TB|TD|BT)/i.test(firstLine)) layout = 'TB';
   if (/flowchart\s+(LR|RL)|graph\s+(LR|RL)/i.test(firstLine)) layout = 'LR';
 
+  if (/^(?:flowchart|graph)\s+RL/i.test(firstLine)) layout = 'RL';
+  if (/^(?:flowchart|graph)\s+BT/i.test(firstLine)) layout = 'BT';
+
   // Track subgraph context
-  const subgraphStack: Array<{ id: string; label: string; members: Set<string>; parentId?: string }> = [];
+  const subgraphStack: Array<{
+    id: string;
+    label: string;
+    members: Set<string>;
+    parentId?: string;
+  }> = [];
 
   let i = 0;
   while (i < lines.length) {
@@ -206,20 +327,30 @@ export function parseMermaid(mermaid: string): Graph {
     if (/^(flowchart|graph)\s/i.test(line)) continue;
     if (line.startsWith('%%')) continue;
     if (line === '---') continue;
-    if (/^(direction|click|accTitle|accDescr)\b/i.test(line)) continue;
+    if (/^(accTitle|accDescr)\b/i.test(line)) continue;
 
     // ── Subgraph start ──
-    const subStart = /^subgraph\s+(?:([A-Za-z0-9_]+)\s*\[["']?(.*?)["']?\]|(["']?)([^"'\n]+)\3)\s*$/i.exec(line);
+    const subStart =
+      /^subgraph\s+(?:([A-Za-z0-9_]+)\s*\[["']?(.*?)["']?\]|(["']?)([^"'\n]+)\3)\s*$/i.exec(
+        line,
+      );
     if (subStart) {
       const label = (subStart[2] || subStart[4]).trim();
       const rawId = subStart[1] || label;
-      const id    = 'grp_' + rawId.toLowerCase().replace(/\W+/g, '_');
+      const id = 'grp_' + rawId.toLowerCase().replace(/\W+/g, '_');
 
       let parentId: string | undefined = undefined;
       if (subgraphStack.length > 0) {
         parentId = subgraphStack[subgraphStack.length - 1].id;
       }
 
+      if (subgraphStack.length >= 20) throw new Error('Use at most 20 nested groups.');
+      if (
+        groups.some((group) => group.id === id) ||
+        subgraphStack.some((group) => group.id === id)
+      ) {
+        warnings.push('Subgraph IDs must be unique: ' + id);
+      }
       subgraphStack.push({ id, label, members: new Set(), parentId });
       continue;
     }
@@ -227,7 +358,7 @@ export function parseMermaid(mermaid: string): Graph {
     // ── Subgraph end ──
     if (/^end\s*$/i.test(line)) {
       const grp = subgraphStack.pop();
-      if (grp && grp.members.size > 0) {
+      if (grp) {
         const groupColors = [
           'rgba(147,51,234,0.1)',
           'rgba(16,185,129,0.1)',
@@ -243,11 +374,12 @@ export function parseMermaid(mermaid: string): Graph {
           parentId: grp.parentId,
         });
       }
+      if (!grp) warnings.push('Unexpected end without a subgraph.');
       continue;
     }
 
     // ── Style / fill color parsing ──
-    const styleMatch = /^style\s+([A-Za-z0-9_]+)\s+(.*)$/i.exec(line);
+    const styleMatch = /^style\s+([A-Za-z0-9_.-]+)\s+(.*)$/i.exec(line);
     if (styleMatch) {
       const id = styleMatch[1];
       const props = styleMatch[2];
@@ -261,7 +393,10 @@ export function parseMermaid(mermaid: string): Graph {
       continue;
     }
 
-    if (/^(style|classDef|class|linkStyle)\s/i.test(line)) continue;
+    if (/^(style|classDef|class|linkStyle|click|direction)\b/i.test(line)) {
+      warnings.push('Unsupported directive: ' + line);
+      continue;
+    }
 
     // ── Edge line(s) — may contain chains and multi-node shorthand ──
     const parsedEdges = parseEdgeLine(line, nodeMap, warnings);
@@ -270,15 +405,26 @@ export function parseMermaid(mermaid: string): Graph {
         for (const fromId of pe.fromIds) {
           for (const toId of pe.toIds) {
             // Dedup identical edges so repeated lines never draw extra arrows.
-            const key = `${fromId}→${toId}|${pe.label}|${pe.isDashed ? 1 : 0}`;
+            const key = JSON.stringify([
+              fromId,
+              toId,
+              pe.label,
+              pe.isDashed,
+              pe.arrow,
+              pe.thick,
+            ]);
             if (seenEdges.has(key)) continue;
             seenEdges.add(key);
+            if (edges.length >= 300)
+              throw new Error('Use up to 300 connections per diagram.');
             edges.push({
               id: eid(),
               from: fromId,
               to: toId,
               label: pe.label,
               dashed: pe.isDashed,
+              arrow: pe.arrow,
+              thick: pe.thick,
               // Real cycle/back-edges are detected structurally in the layout
               // engine; a dashed style no longer implies a back-edge.
               isBackEdge: false,
@@ -305,9 +451,13 @@ export function parseMermaid(mermaid: string): Graph {
     }
 
     // ── Nothing matched — record it instead of silently dropping it ──
-    warnings.push(`Line not understood: "${line.length > 60 ? line.slice(0, 57) + '…' : line}"`);
+    warnings.push(
+      `Line not understood: "${line.length > 60 ? line.slice(0, 57) + '…' : line}"`,
+    );
   }
 
+  if (nodeMap.size > 100) throw new Error('Use up to 100 nodes per diagram.');
+  if (subgraphStack.length) warnings.push('Unclosed subgraph: add end.');
   return {
     nodes: [...nodeMap.values()],
     edges,
@@ -319,12 +469,15 @@ export function parseMermaid(mermaid: string): Graph {
 
 // ── Detect if input is already Mermaid ───────────────────────────────────────
 export function looksLikeMermaid(text: string): boolean {
-  const t = text.trim().toLowerCase();
+  const t = text
+    .trim()
+    .replace(/^\x60\x60\x60(?:mermaid)?\s*/i, '')
+    .toLowerCase();
   return (
-    t.startsWith('flowchart') ||
-    t.startsWith('graph ') ||
-    t.startsWith('sequencediagram') ||
-    t.startsWith('statediagram') ||
-    /^(a|b|c|node)\[/.test(t)
+    /^(flowchart|graph|sequencediagram|statediagram|classdiagram|erdiagram|gantt|pie|journey|mindmap|gitgraph|quadrantchart|xychart)\b/.test(
+      t,
+    ) ||
+    /^[a-z0-9_.-]+\s*[[({]/i.test(t) ||
+    /-->|-\.->|==>/.test(t)
   );
 }

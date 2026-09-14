@@ -6,7 +6,10 @@
  * belongs next to the decision node, not at some corner of a long detour lane
  * in empty space.
  */
-export interface Pt { x: number; y: number }
+export interface Pt {
+  x: number;
+  y: number;
+}
 
 export function labelAnchor(points: Pt[] | undefined): Pt | null {
   if (!points || points.length < 2) return null;

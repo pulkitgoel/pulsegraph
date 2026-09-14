@@ -19,8 +19,8 @@ export function findBackEdgeIds(graph: Graph): Set<string> {
   const inStack = new Set<string>();
   const backEdges = new Set<string>();
   const outEdges = new Map<string, { id: string; to: string }[]>();
-  graph.nodes.forEach(n => outEdges.set(n.id, []));
-  graph.edges.forEach(e => outEdges.get(e.from)?.push({ id: e.id, to: e.to }));
+  graph.nodes.forEach((n) => outEdges.set(n.id, []));
+  graph.edges.forEach((e) => outEdges.get(e.from)?.push({ id: e.id, to: e.to }));
 
   function dfs(id: string) {
     visited.add(id);
@@ -31,7 +31,9 @@ export function findBackEdgeIds(graph: Graph): Set<string> {
     }
     inStack.delete(id);
   }
-  graph.nodes.forEach(n => { if (!visited.has(n.id)) dfs(n.id); });
+  graph.nodes.forEach((n) => {
+    if (!visited.has(n.id)) dfs(n.id);
+  });
   return backEdges;
 }
 
@@ -41,8 +43,11 @@ export function computeLevels(graph: Graph): Map<string, number> {
   const adj = new Map<string, string[]>();
   const backEdges = findBackEdgeIds(graph);
 
-  graph.nodes.forEach(n => { inDegree.set(n.id, 0); adj.set(n.id, []); });
-  graph.edges.forEach(e => {
+  graph.nodes.forEach((n) => {
+    inDegree.set(n.id, 0);
+    adj.set(n.id, []);
+  });
+  graph.edges.forEach((e) => {
     if (!e.isBackEdge && !backEdges.has(e.id) && inDegree.has(e.to) && adj.has(e.from)) {
       inDegree.set(e.to, (inDegree.get(e.to) || 0) + 1);
       adj.get(e.from)!.push(e.to);
@@ -50,7 +55,9 @@ export function computeLevels(graph: Graph): Map<string, number> {
   });
 
   let queue: string[] = [];
-  graph.nodes.forEach(n => { if (inDegree.get(n.id) === 0) queue.push(n.id); });
+  graph.nodes.forEach((n) => {
+    if (inDegree.get(n.id) === 0) queue.push(n.id);
+  });
 
   let level = 0;
   while (queue.length > 0) {
@@ -67,12 +74,16 @@ export function computeLevels(graph: Graph): Map<string, number> {
   }
 
   // Fallback for cycles or disconnected nodes
-  graph.nodes.forEach(n => { if (!levels.has(n.id)) levels.set(n.id, level); });
+  graph.nodes.forEach((n) => {
+    if (!levels.has(n.id)) levels.set(n.id, level);
+  });
   return levels;
 }
 
 export function maxLevel(levels: Map<string, number>): number {
   let m = 0;
-  levels.forEach(v => { if (v > m) m = v; });
+  levels.forEach((v) => {
+    if (v > m) m = v;
+  });
   return m;
 }

@@ -1,446 +1,718 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import { ChatPanel } from './components/ChatPanel';
 import { DiagramCanvas } from './components/DiagramCanvas';
 import { RichDiagramCanvas } from './components/RichDiagramCanvas';
+import { SourceEditor } from './components/SourceEditor';
 import { sendMessage, designPresentation } from './services/llmService';
-import { exportPng, exportGif, type ExportFrame } from './services/gifExporter';
-import { computeLayout, roleBlueprintLayout } from './parser/layoutEngine';
+import type { ExportFrame } from './services/gifExporter';
 import { buildBlueprintSvg } from './render/blueprintSvg';
-import { computeLevels, maxLevel } from './lib/graphLevels';
-import type { Graph, ChatMessage, LlmProvider, OllamaModel } from './types';
-
-const STORAGE_KEY = 'pulsegraph_deepseek_key';
-const PROVIDER_KEY = 'pulsegraph_llm_provider';
-const OLLAMA_MODEL_KEY = 'pulsegraph_ollama_model';
-
-function getId() { return Math.random().toString(36).slice(2); }
+import { createDocument, deserializeDocument, serializeDocument } from './lib/document';
+import { readPreference, writePreference } from './lib/storage';
+import {
+  clearSessionApiKey,
+  readSessionApiKey,
+  writeSessionApiKey,
+} from './lib/sessionCredentials';
+import { useDocument } from './lib/useDocument';
+import { looksLikeMermaid } from './parser/mermaidParser';
+import type { ChatMessage, LlmProvider } from './types';
 
 export type LoadingStep = 'generating' | 'validating' | 'rendering' | null;
+type ExportKind = 'png' | 'gif' | 'slide' | 'svg' | 'source' | 'document';
 
 const EXAMPLES = [
-  'flowchart TD\n  A[Start] --> B{Is it working?}\n  B -->|Yes| C[Ship it!]\n  B -->|No| D[Debug] --> B',
-  'Design a microservices backend: API Gateway → Auth, Product, Order services → PostgreSQL',
-  'Create a CI/CD pipeline: GitHub → Actions → Docker Registry → Kubernetes',
-  'User logs in → Auth Service checks Redis cache → if miss, query PostgreSQL → return JWT',
+  {
+    name: 'Request flow',
+    source:
+      'flowchart LR\nU((User)) --> API[API Gateway]\nAPI --> AUTH[Auth Service]\nAPI --> S[Product Service]\nS --> DB[(PostgreSQL)]\nS -.-> CACHE[/Redis/]',
+  },
+  {
+    name: 'Decision loop',
+    source:
+      'flowchart TB\nA[Start] --> B{Is it working?}\nB -->|Yes| C[Ship it]\nB -->|No| D[Debug]\nD --> B',
+  },
+  {
+    name: 'Delivery pipeline',
+    source:
+      'flowchart LR\nA[GitHub] --> B[Tests]\nB --> C{Pass?}\nC -->|Yes| D[Build container]\nD --> E[Deploy]\nC -->|No| F[Fix code]\nF --> A',
+  },
 ];
 
+function message(role: ChatMessage['role'], content: string): ChatMessage {
+  return { id: crypto.randomUUID(), role, content, timestamp: new Date() };
+}
+
+function download(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 export default function App() {
-  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem(STORAGE_KEY) ?? '');
-  const [provider, setProvider] = useState<LlmProvider>(() => (localStorage.getItem(PROVIDER_KEY) as LlmProvider) ?? 'deepseek');
-  const [ollamaModel, setOllamaModel] = useState<OllamaModel>(() => (localStorage.getItem(OLLAMA_MODEL_KEY) as OllamaModel) ?? 'gemma3:4b');
-  const [appState, setAppState] = useState<'idle' | 'active'>('idle');
-  const [graph, setGraph] = useState<Graph | null>(null);
-  const [mermaidSource, setMermaidSource] = useState('');
-  const [showMermaid, setShowMermaid] = useState(false);
+  const workspace = useDocument();
+  const diagram = workspace.document;
+  const [apiKey, setApiKey] = useState(readSessionApiKey);
+  const [provider, setProvider] = useState<LlmProvider>(() =>
+    readPreference('pulsegraph_llm_provider') === 'ollama' ? 'ollama' : 'deepseek',
+  );
+  const [model, setModel] = useState(
+    () => readPreference('pulsegraph_ollama_model') || 'gemma3:4b',
+  );
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('pulsegraph_theme') as 'dark' | 'light') || 'dark');
-  const [isLoading, setIsLoading] = useState(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() =>
+    readPreference('pulsegraph_theme') === 'light' ? 'light' : 'dark',
+  );
   const [loadingStep, setLoadingStep] = useState<LoadingStep>(null);
-  const [isExporting, setIsExporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
-  const [gifUrl, setGifUrl] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [copied, setCopied] = useState(false);
   const [viewMode, setViewMode] = useState<'classic' | 'rich'>('rich');
-  const [showChat, setShowChat] = useState(true);
-  const [exportType, setExportType] = useState<'png' | 'gif' | null>(null);
+  const [presentationMode, setPresentationMode] = useState(false);
+  const [showChat, setShowChat] = useState(() => window.innerWidth > 700);
+  const [showSource, setShowSource] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const toolsRef = useRef<HTMLDivElement>(null);
   const [exportFrame, setExportFrame] = useState<ExportFrame>('auto');
-  const [showExportMenu, setShowExportMenu] = useState(false);
-  const [presentationRoles, setPresentationRoles] = useState<Record<string, string> | null>(null);
-
-  const canvasContainerRef = useRef<HTMLDivElement>(null);
-
-  const handleSaveConfig = (key: string, newProvider: LlmProvider, newOllamaModel?: OllamaModel) => {
-    localStorage.setItem(STORAGE_KEY, key);
-    localStorage.setItem(PROVIDER_KEY, newProvider);
-    if (newOllamaModel) localStorage.setItem(OLLAMA_MODEL_KEY, newOllamaModel);
-    setApiKey(key);
-    setProvider(newProvider);
-    if (newOllamaModel) setOllamaModel(newOllamaModel);
-  };
-
-  const handleResetConfig = () => {
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(PROVIDER_KEY);
-    setApiKey('');
-    setProvider('deepseek');
-  };
+  const [reducedMotion, setReducedMotion] = useState(
+    () => matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
+  const operation = useRef<AbortController | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
+  const busy = loadingStep !== null || exporting;
+  const active = !!diagram || messages.length > 0;
+  const diagramSource = diagram?.source ?? null;
+  const standardGraph = useMemo(
+    () => (diagramSource ? createDocument(diagramSource).graph : null),
+    [diagramSource],
+  );
+  const isPresentation = presentationMode && !!diagram?.roles;
+  const displayedGraph = isPresentation ? diagram?.graph : standardGraph;
 
   useEffect(() => {
-    if (theme === 'light') document.documentElement.classList.add('light');
-    else document.documentElement.classList.remove('light');
-    localStorage.setItem('pulsegraph_theme', theme);
+    if (!toolsOpen) return;
+    function closeOutside(event: PointerEvent) {
+      if (!toolsRef.current?.contains(event.target as Node)) setToolsOpen(false);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setToolsOpen(false);
+        toolsRef.current?.querySelector('button')?.focus();
+      }
+    }
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [toolsOpen]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('light', theme === 'light');
+    writePreference('pulsegraph_theme', theme);
   }, [theme]);
 
-  const submitMessage = useCallback(
-    async (text: string) => {
-      const userText = text.trim();
-      if (!userText || isLoading) return;
-      setError('');
+  useEffect(() => {
+    // Remove credentials persisted by earlier versions; new keys stay in memory.
+    writePreference('pulsegraph_deepseek_key', null);
+    return () => operation.current?.abort();
+  }, []);
 
-      const userMsg: ChatMessage = { id: getId(), role: 'user', content: userText, timestamp: new Date() };
-      const newHistory = [...messages, userMsg];
-      setMessages(newHistory);
-      setInput('');
-      setIsLoading(true);
-      setLoadingStep('generating');
-
-      try {
-        const result = await sendMessage(userText, messages, graph ? { ...graph, mermaidSource } : null, apiKey, provider, ollamaModel, (step) => setLoadingStep(step));
-
-        const aiMsg: ChatMessage = {
-          id: getId(),
-          role: 'assistant',
-          content: result.message,
-          timestamp: new Date(),
-        };
-        setMessages([...newHistory, aiMsg]);
-
-        if (result.graph && !result.isOffTopic) {
-          const laid = computeLayout(result.graph);
-          setGraph(laid);
-          setMermaidSource(result.mermaidSource);
-          // A freshly generated/edited diagram invalidates any previous
-          // Presentation roles — Blueprint PNG must be re-run for this graph.
-          setPresentationRoles(null);
-        }
-        
-        // Always switch to active state to show the chat panel for the response,
-        // even if it's an off-topic/validation message with no graph.
-        if (appState === 'idle') setAppState('active');
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'Unknown error';
-        setError(msg);
-        setMessages([...newHistory, { id: getId(), role: 'assistant', content: `⚠️ Error: ${msg}`, timestamp: new Date() }]);
-      } finally {
-        setIsLoading(false);
-        setLoadingStep(null);
-      }
-    },
-    [apiKey, provider, ollamaModel, appState, graph, isLoading, messages]
-  );
-
-  const handleIdleSubmit = () => { if (input.trim()) submitMessage(input); };
-
-  const handleDesignPresentation = useCallback(async () => {
-    if (!mermaidSource || isLoading) return;
-    setError('');
-    setIsLoading(true);
-    setLoadingStep('generating');
+  function applySource(source: string) {
     try {
-      const result = await designPresentation(mermaidSource, apiKey, provider, ollamaModel, (step) => setLoadingStep(step));
-      if (result.graph && !result.isOffTopic) {
-        // Role-based semantic layout when the AI provided roles; otherwise fall back.
-        const laid = result.roles
-          ? roleBlueprintLayout(result.graph, result.roles)
-          : computeLayout(result.graph);
-        setGraph(laid);
-        setMermaidSource(result.mermaidSource);
-        setViewMode('rich');
-        setPresentationRoles(result.roles ?? null);
+      workspace.commit(createDocument(source));
+      setPresentationMode(false);
+      setError('');
+    } catch (failure) {
+      setError(
+        failure instanceof Error ? failure.message : 'Could not parse the source.',
+      );
+    }
+  }
+
+  function resetWorkspace() {
+    operation.current?.abort();
+    workspace.reset();
+    setMessages([]);
+    setInput('');
+    setPresentationMode(false);
+    setShowSource(false);
+    setShowChat(window.innerWidth > 700);
+    setError('');
+    setToolsOpen(false);
+  }
+
+  async function submit(text: string) {
+    if (!text.trim() || operation.current) return;
+    if (!looksLikeMermaid(text) && provider === 'deepseek' && !apiKey) {
+      setSettingsOpen(true);
+      return;
+    }
+
+    const controller = new AbortController();
+    operation.current = controller;
+    setLoadingStep('generating');
+    setError('');
+    setMessages((previous) => [...previous, message('user', text)]);
+    setInput('');
+
+    try {
+      const result = await sendMessage(
+        text,
+        messages,
+        diagram?.graph ?? null,
+        apiKey,
+        provider,
+        model,
+        setLoadingStep,
+        controller.signal,
+      );
+      controller.signal.throwIfAborted();
+      if (result.graph) {
+        workspace.commit(createDocument(result.mermaidSource));
+        setPresentationMode(false);
       }
-      setMessages((prev) => [...prev, { id: getId(), role: 'assistant', content: result.message, timestamp: new Date() }]);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to redesign diagram';
-      setError(msg);
+      setMessages((previous) =>
+        [...previous, message('assistant', result.message)].slice(-80),
+      );
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Generation failed.');
+      setInput(text);
     } finally {
-      setIsLoading(false);
+      operation.current = null;
       setLoadingStep(null);
     }
-  }, [mermaidSource, isLoading, apiKey, provider, ollamaModel]);
+  }
 
-  const handleExportBlueprint = useCallback(async () => {
-    if (!graph || !presentationRoles || isExporting) return;
+  async function present() {
+    if (!diagram || operation.current) return;
+    if (diagram.roles) {
+      setViewMode('rich');
+      setPresentationMode(true);
+      return;
+    }
+    if (provider === 'deepseek' && !apiKey) {
+      setSettingsOpen(true);
+      return;
+    }
+
+    const controller = new AbortController();
+    operation.current = controller;
+    setLoadingStep('generating');
     setError('');
-    setIsExporting(true);
-    const svg = buildBlueprintSvg(graph, presentationRoles, { title: 'Architecture Flow' });
-    const w = Number(/width="(\d+)"/.exec(svg)?.[1] || 1200);
-    const h = Number(/height="(\d+)"/.exec(svg)?.[1] || 700);
-    const scale = 2;
 
-    // Scale the SVG's pixel dimensions (keeping the original viewBox) so the
-    // browser rasterises directly at target resolution — upscaling the bitmap
-    // afterwards is the blurry path the canvas exporter explicitly avoids.
-    const scaledSvg = svg.replace(
-      `width="${w}" height="${h}"`,
-      `width="${w * scale}" height="${h * scale}"`,
-    );
-
-    const svgUrl = URL.createObjectURL(new Blob([scaledSvg], { type: 'image/svg+xml;charset=utf-8' }));
     try {
-      const img = new Image();
-      await new Promise<void>((res, rej) => {
-        img.onload = () => res();
-        img.onerror = () => rej(new Error('Could not rasterize the blueprint SVG.'));
-        img.src = svgUrl;
-      });
-      const canvas = document.createElement('canvas');
-      canvas.width = w * scale; canvas.height = h * scale;
-      const ctx = canvas.getContext('2d')!;
-      ctx.fillStyle = '#f7f8fb'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0);
-      const pngUrl = await new Promise<string>((res, rej) =>
-        canvas.toBlob(b => (b ? res(URL.createObjectURL(b)) : rej(new Error('canvas.toBlob failed'))), 'image/png'));
-      const a = document.createElement('a'); a.href = pngUrl; a.download = 'blueprint.png'; a.click();
-      setTimeout(() => URL.revokeObjectURL(pngUrl), 5000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Blueprint PNG export failed');
+      const result = await designPresentation(
+        diagram.source,
+        apiKey,
+        provider,
+        model,
+        setLoadingStep,
+        controller.signal,
+      );
+      controller.signal.throwIfAborted();
+      workspace.commit(createDocument(result.mermaidSource, result.roles ?? null));
+      setViewMode('rich');
+      setPresentationMode(true);
+      setMessages((previous) => [...previous, message('assistant', result.message)]);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Presentation failed.');
     } finally {
-      URL.revokeObjectURL(svgUrl);
-      setIsExporting(false);
+      operation.current = null;
+      setLoadingStep(null);
     }
-  }, [graph, presentationRoles, isExporting]);
+  }
 
-  const handleExport = async (type: 'png' | 'gif') => {
-    if (!graph) return;
-    const svgElement = document.getElementById('pulsegraph-svg');
-    if (!svgElement) return;
+  async function exportDiagram(kind: ExportKind) {
+    if (!diagram || operation.current) return;
+    const controller = new AbortController();
+    operation.current = controller;
+    setExporting(true);
+    setError('');
 
-    setExportType(type);
-    let fileHandle: FileSystemFileHandle | null = null;
-    if ('showSaveFilePicker' in window) {
-      try {
-        const suggestedName = `pulsegraph-flow.${type}`;
-        const description = type === 'png' ? 'PNG Image' : 'GIF Image';
-        const accept = type === 'png' ? { 'image/png': ['.png'] } : { 'image/gif': ['.gif'] };
-        fileHandle = await (window as unknown as {
-          showSaveFilePicker: (opts: object) => Promise<FileSystemFileHandle>;
-        }).showSaveFilePicker({
-          suggestedName,
-          types: [{ description, accept }],
-        });
-      } catch { return; }
-    }
-    setIsExporting(true); setExportProgress(0); setGifUrl(null); setError('');
     try {
-      // GIF capture must outlast the entry animation: nodes appear at
-      // level * 0.6s, so deep graphs need a longer loop than shallow ones.
-      const gifDuration = Math.min(12, Math.max(3, maxLevel(computeLevels(graph)) * 0.6 + 2.4));
-      const url = type === 'png'
-        ? await exportPng(svgElement, theme, (pct) => setExportProgress(pct), exportFrame)
-        : await exportGif(svgElement, theme, gifDuration, (pct) => setExportProgress(pct), exportFrame);
-      if (fileHandle) {
-        const blob = await fetch(url).then((r) => r.blob());
-        URL.revokeObjectURL(url);
-        const writable = await fileHandle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-      } else {
-        setGifUrl(url);
-        setTimeout(() => { URL.revokeObjectURL(url); setGifUrl(null); }, 120_000);
+      if (kind === 'source' || kind === 'document') {
+        const content = kind === 'source' ? diagram.source : serializeDocument(diagram);
+        download(
+          new Blob([content], { type: 'text/plain;charset=utf-8' }),
+          kind === 'source' ? 'pulsegraph.mmd' : 'pulsegraph.json',
+        );
+        return;
       }
-    } catch (err) {
-      console.error(`${type.toUpperCase()} export failed:`, err);
-      setError(`${type.toUpperCase()} export failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+
+      const exporter = await import('./services/gifExporter');
+      const liveSvg = document.getElementById('pulsegraph-svg');
+      if (!liveSvg) throw new Error('No diagram to export.');
+
+      let svg: Element = liveSvg;
+      if (kind === 'slide') {
+        if (!diagram.roles)
+          throw new Error('Choose Presentation before exporting a slide.');
+        svg = new DOMParser().parseFromString(
+          buildBlueprintSvg(diagram.graph, diagram.roles),
+          'image/svg+xml',
+        ).documentElement;
+      }
+
+      if (kind === 'svg') {
+        download(
+          new Blob([exporter.snapshotSvg(svg)], { type: 'image/svg+xml' }),
+          'pulsegraph.svg',
+        );
+        return;
+      }
+
+      const blob =
+        kind === 'gif'
+          ? await exporter.exportGif(
+              svg,
+              theme,
+              3,
+              setExportProgress,
+              exportFrame,
+              controller.signal,
+            )
+          : await exporter.exportPng(
+              svg,
+              kind === 'slide' ? 'light' : theme,
+              setExportProgress,
+              exportFrame,
+              controller.signal,
+            );
+      download(
+        blob,
+        kind === 'gif'
+          ? 'pulsegraph.gif'
+          : kind === 'slide'
+            ? 'pulsegraph-slide.png'
+            : 'pulsegraph.png',
+      );
+    } catch (failure) {
+      setError(
+        controller.signal.aborted
+          ? 'Export cancelled.'
+          : failure instanceof Error
+            ? failure.message
+            : 'Export failed.',
+      );
+    } finally {
+      operation.current = null;
+      setExporting(false);
+      setExportProgress(0);
     }
-    finally { setIsExporting(false); setExportProgress(0); }
-  };
+  }
 
-  const handleCopyMermaid = () => {
-    navigator.clipboard.writeText(mermaidSource).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-
-  const isConfigured = provider === 'ollama' || (provider === 'deepseek' && apiKey);
-  if (!isConfigured) return <ApiKeyModal onSave={handleSaveConfig} />;
+  async function importFile(file?: File) {
+    if (!file || busy) return;
+    try {
+      if (file.size > 100_000)
+        throw new Error('Import files must be smaller than 100 KB.');
+      const text = await file.text();
+      const imported = file.name.endsWith('.json')
+        ? deserializeDocument(text)
+        : createDocument(text);
+      workspace.commit(imported);
+      setPresentationMode(false);
+      setError('');
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Import failed.');
+    }
+  }
 
   return (
-    <div className={`app-layout ${appState}`}>
-      {/* ── Header ── */}
+    <div className={'app-layout ' + (active ? 'active' : 'idle')}>
       <header className="app-header">
         <div className="app-logo">
-          <span>⚡</span>
-          <span>PulseGraph</span>
+          <span aria-hidden="true">⚡</span>PulseGraph
         </div>
-        <div className="app-header-right">
-          <button className="btn-icon" onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} title="Toggle theme" style={{ padding: '0.4rem', fontSize: '1.1rem' }}>
-            {theme === 'dark' ? '☀️' : '🌙'}
-          </button>
-          <div className="active-provider" title={provider === 'deepseek' ? 'AI model: DeepSeek (cloud)' : `AI model: Ollama (local) — ${ollamaModel}`}>
-            <span className="provider-dot" style={{ background: provider === 'deepseek' ? '#818CF8' : '#F472B6' }} />
-            {provider === 'deepseek' ? 'DeepSeek' : 'Ollama'}
-          </div>
-          {appState === 'active' && graph && (
+        <nav className="app-header-right" aria-label="Diagram tools">
+          <input
+            ref={importRef}
+            type="file"
+            accept=".mmd,.txt,.json"
+            hidden
+            onChange={(event) => {
+              void importFile(event.target.files?.[0]);
+              event.target.value = '';
+            }}
+          />
+          {diagram && (
             <>
-              <div className="view-toggle">
-                <button className={viewMode === 'classic' ? 'active' : ''} onClick={() => setViewMode('classic')}>Classic</button>
-                <button className={viewMode === 'rich' ? 'active' : ''} onClick={() => setViewMode('rich')}>Rich</button>
-              </div>
-              <button
-                className="btn-design"
-                onClick={handleDesignPresentation}
-                disabled={isLoading}
-                title="AI reinterprets this diagram into a clean, sectioned presentation layout — then use Export → Slide PNG"
-              >
-                ✨ AI Presentation
-              </button>
-              <div className="export-menu-wrap">
+              <div className="view-toggle" aria-label="Diagram appearance">
                 <button
-                  className="btn-export-menu"
-                  onClick={() => setShowExportMenu(v => !v)}
-                  disabled={isExporting}
-                  title="Export the diagram as an image"
+                  disabled={busy}
+                  className={viewMode === 'classic' && !isPresentation ? 'active' : ''}
+                  aria-pressed={viewMode === 'classic' && !isPresentation}
+                  onClick={() => {
+                    setViewMode('classic');
+                    setPresentationMode(false);
+                  }}
                 >
-                  {isExporting ? `Exporting… ${exportProgress}%` : '⬇ Export'}
+                  Classic
                 </button>
-                {showExportMenu && (
-                  <>
-                    <div className="menu-backdrop" onClick={() => setShowExportMenu(false)} />
-                    <div className="export-menu">
-                      <button className="export-menu-item" onClick={() => { setShowExportMenu(false); handleExport('png'); }}>
-                        <span>PNG</span>
-                        <small>hi-res still of the current view</small>
-                      </button>
-                      <button className="export-menu-item" onClick={() => { setShowExportMenu(false); handleExport('gif'); }}>
-                        <span>GIF</span>
-                        <small>animated loop of the diagram</small>
-                      </button>
-                      <button
-                        className="export-menu-item"
-                        disabled={!presentationRoles}
-                        title={presentationRoles ? 'Download the presentation layout as a polished slide' : 'Run ✨ AI Presentation first — this unlocks once it finishes'}
-                        onClick={() => { setShowExportMenu(false); handleExportBlueprint(); }}
-                      >
-                        <span>Slide PNG</span>
-                        <small>{presentationRoles ? 'clean presentation-style slide' : 'run ✨ AI Presentation first'}</small>
-                      </button>
-                      <div className="export-menu-divider" />
-                      <label className="export-menu-label">
-                        Frame size
-                        <select
-                          className="frame-select"
-                          value={exportFrame}
-                          onChange={(e) => setExportFrame(e.target.value as ExportFrame)}
-                        >
-                          <option value="auto">Fit to content</option>
-                          <option value="16:9">16:9 (widescreen slide)</option>
-                          <option value="16:10">16:10 (slide)</option>
-                          <option value="4:3">4:3 (slide)</option>
-                          <option value="1:1">1:1 (square)</option>
-                          <option value="a4-landscape">A4 landscape (doc)</option>
-                          <option value="a4-portrait">A4 portrait (doc)</option>
-                        </select>
-                      </label>
-                    </div>
-                  </>
-                )}
+                <button
+                  disabled={busy}
+                  className={viewMode === 'rich' && !isPresentation ? 'active' : ''}
+                  aria-pressed={viewMode === 'rich' && !isPresentation}
+                  onClick={() => {
+                    setViewMode('rich');
+                    setPresentationMode(false);
+                  }}
+                >
+                  Rich
+                </button>
+                <button
+                  disabled={busy}
+                  className={
+                    isPresentation ? 'active presentation-tab' : 'presentation-tab'
+                  }
+                  aria-pressed={isPresentation}
+                  onClick={() => void present()}
+                  title="Create or reopen a presentation layout"
+                >
+                  Presentation
+                </button>
               </div>
-              <button className="btn-icon" onClick={() => setShowChat(!showChat)} title={showChat ? 'Hide chat panel' : 'Show chat panel'} style={{ padding: '0.4rem 0.55rem' }}>
-                💬
-              </button>
-              <button className="btn-icon" onClick={() => setShowMermaid(!showMermaid)} title={showMermaid ? 'Hide Mermaid source' : 'Show Mermaid source'} style={{ padding: '0.4rem 0.55rem', fontFamily: 'monospace', fontSize: '0.8rem', fontWeight: 700 }}>
-                {'</>'}
+              <div className="history-controls" aria-label="History">
+                <button
+                  className="btn-icon"
+                  disabled={busy || !workspace.canUndo}
+                  onClick={workspace.undo}
+                  title="Undo"
+                  aria-label="Undo"
+                >
+                  ↶
+                </button>
+                <button
+                  className="btn-icon"
+                  disabled={busy || !workspace.canRedo}
+                  onClick={workspace.redo}
+                  title="Redo"
+                  aria-label="Redo"
+                >
+                  ↷
+                </button>
+              </div>
+              <details className="export-menu-wrap">
+                <summary className="btn-export-menu">Export</summary>
+                <div className="export-menu">
+                  {(['png', 'gif', 'slide', 'svg', 'source', 'document'] as const).map(
+                    (kind) => (
+                      <button
+                        key={kind}
+                        className="export-menu-item"
+                        disabled={busy || (kind === 'slide' && !diagram.roles)}
+                        title={
+                          kind === 'slide' && !diagram.roles
+                            ? 'Choose Presentation first'
+                            : undefined
+                        }
+                        onClick={(event) => {
+                          event.currentTarget.closest('details')?.removeAttribute('open');
+                          void exportDiagram(kind);
+                        }}
+                      >
+                        {
+                          {
+                            png: 'PNG',
+                            gif: 'GIF',
+                            slide: 'Slide PNG',
+                            svg: 'SVG',
+                            source: 'Mermaid source',
+                            document: 'Editable document',
+                          }[kind]
+                        }
+                      </button>
+                    ),
+                  )}
+                  <label className="export-menu-label">
+                    Frame size
+                    <select
+                      value={exportFrame}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setExportFrame(event.target.value as ExportFrame)
+                      }
+                    >
+                      {[
+                        'auto',
+                        '16:9',
+                        '16:10',
+                        '4:3',
+                        '1:1',
+                        'a4-landscape',
+                        'a4-portrait',
+                      ].map((frame) => (
+                        <option key={frame} value={frame}>
+                          {frame === 'auto' ? 'Fit to content' : frame}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </details>
+              <button
+                className="btn-icon"
+                onClick={() => setShowChat(!showChat)}
+                aria-expanded={showChat}
+              >
+                Chat
               </button>
             </>
           )}
-        </div>
+          {!active ? (
+            <div className="landing-actions">
+              <button
+                className="btn-icon"
+                disabled={busy}
+                onClick={() => importRef.current?.click()}
+              >
+                Import diagram
+              </button>
+              <button
+                className="btn-icon"
+                disabled={busy}
+                onClick={() => setSettingsOpen(true)}
+              >
+                AI settings
+              </button>
+              <button
+                className="btn-icon"
+                aria-label={theme === 'dark' ? 'Use light theme' : 'Use dark theme'}
+                title={theme === 'dark' ? 'Use light theme' : 'Use dark theme'}
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              >
+                <span aria-hidden="true">{theme === 'dark' ? '☀' : '☾'}</span>
+              </button>
+            </div>
+          ) : (
+            <div className="tools-menu-wrap" ref={toolsRef}>
+              <button
+                className="btn-icon"
+                aria-label="Workspace tools"
+                aria-expanded={toolsOpen}
+                onClick={() => setToolsOpen((open) => !open)}
+              >
+                Workspace <span aria-hidden="true">⌄</span>
+              </button>
+              {toolsOpen && (
+                <div className="tools-menu">
+                  <span className="tools-menu-heading">Workspace tools</span>
+                  <button
+                    onClick={() => {
+                      setToolsOpen(false);
+                      setSettingsOpen(true);
+                    }}
+                    disabled={busy}
+                  >
+                    AI settings
+                  </button>
+                  <button
+                    onClick={() => {
+                      setToolsOpen(false);
+                      setTheme(theme === 'dark' ? 'light' : 'dark');
+                    }}
+                    disabled={busy}
+                  >
+                    {theme === 'dark' ? 'Use light theme' : 'Use dark theme'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setToolsOpen(false);
+                      importRef.current?.click();
+                    }}
+                    disabled={busy}
+                  >
+                    Import diagram
+                  </button>
+                  {diagram && (
+                    <>
+                      <button
+                        disabled={busy}
+                        aria-pressed={!reducedMotion}
+                        onClick={() => {
+                          setToolsOpen(false);
+                          setReducedMotion(!reducedMotion);
+                        }}
+                      >
+                        {reducedMotion ? 'Play animation' : 'Pause animation'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setToolsOpen(false);
+                          setShowSource(!showSource);
+                        }}
+                        aria-expanded={showSource}
+                      >
+                        Edit Mermaid source
+                      </button>
+                      <button
+                        className="tools-reset"
+                        disabled={busy}
+                        onClick={resetWorkspace}
+                      >
+                        Reset workspace
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </nav>
       </header>
 
-      <div className={`app-main ${appState}`}>
-        {/* ── Active chat panel (LEFT) ── */}
-        {appState === 'active' && showChat && (
+      <div className={'app-main ' + (active ? 'active' : '')}>
+        {active && showChat && (
           <ChatPanel
             messages={messages}
-            isLoading={isLoading}
+            isLoading={busy}
             loadingStep={loadingStep}
             input={input}
             onInputChange={setInput}
-            onSubmit={() => submitMessage(input)}
-            isExporting={isExporting}
+            onSubmit={() => void submit(input)}
+            isExporting={exporting}
             exportProgress={exportProgress}
-            onResetKey={handleResetConfig}
+            onResetKey={() => setSettingsOpen(true)}
           />
         )}
-
-        {/* ── Canvas (RIGHT) ── */}
-      <main className={`canvas-section ${graph ? 'canvas-section--visible' : ''}`} ref={canvasContainerRef}>
-        {graph && (
-          viewMode === 'rich'
-            ? <RichDiagramCanvas graph={graph} theme={theme} />
-            : <DiagramCanvas graph={graph} theme={theme} />
-        )}
-
-        {/* Mermaid source panel */}
-        {showMermaid && graph && (
-          <div className="mermaid-panel">
-            <div className="mermaid-panel-header">
-              <span>Mermaid Source</span>
-              <button className="mermaid-copy-btn" onClick={handleCopyMermaid}>
-                {copied ? '✓ Copied!' : '⎘ Copy'}
+        <main className={'canvas-section ' + (diagram ? 'canvas-section--visible' : '')}>
+          {diagram &&
+            displayedGraph &&
+            (viewMode === 'rich' ? (
+              <RichDiagramCanvas
+                graph={displayedGraph}
+                theme={theme}
+                reducedMotion={reducedMotion}
+              />
+            ) : (
+              <DiagramCanvas
+                graph={displayedGraph}
+                theme={theme}
+                reducedMotion={reducedMotion}
+              />
+            ))}
+          {diagram && showSource && (
+            <SourceEditor
+              key={diagram.source}
+              source={diagram.source}
+              disabled={busy}
+              onApply={applySource}
+              onClose={() => setShowSource(false)}
+            />
+          )}
+        </main>
+        {!active && (
+          <main className="idle-hero">
+            <h1 className="idle-title">
+              Describe a flow.
+              <br />
+              <span>Watch it come alive.</span>
+            </h1>
+            <p className="idle-subtitle">
+              Paste Mermaid for instant diagrams, or connect AI to turn an idea into a
+              flow.
+            </p>
+            <div className="idle-input-wrap">
+              <textarea
+                id="idle-chat-input"
+                aria-label="Diagram description or Mermaid source"
+                className="idle-input"
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                rows={4}
+                maxLength={30_000}
+                placeholder="flowchart LR; A[Your idea] --> B[Something useful]"
+                disabled={busy}
+              />
+              <button
+                className="btn-primary idle-send"
+                disabled={busy || !input.trim()}
+                onClick={() => void submit(input)}
+              >
+                Generate diagram →
               </button>
             </div>
-            <pre className="mermaid-panel-code">{mermaidSource}</pre>
-          </div>
+            <div className="example-pills">
+              {EXAMPLES.map((example) => (
+                <button
+                  className="example-pill"
+                  key={example.name}
+                  disabled={busy}
+                  onClick={() => applySource(example.source)}
+                >
+                  {example.name}
+                </button>
+              ))}
+            </div>
+            <p className="modal-note">
+              No account needed · Local Mermaid editor · PNG, GIF, SVG and editable
+              exports
+            </p>
+          </main>
         )}
-      </main>
-
-      {/* ── Error Toast (app-level: visible in idle AND active states) ── */}
-      {error && appState === 'active' && (
-        <div className="error-toast" role="alert">
-          <span>⚠️ {error}</span>
-          <button className="gif-toast-close" onClick={() => setError('')}>✕</button>
-        </div>
-      )}
-
-      {/* ── PNG Ready Toast ── */}
-      {gifUrl && (
-        <div className="gif-toast">
-          <span>🎉 {exportType === 'png' ? 'PNG' : 'GIF'} ready!</span>
-          <a href={gifUrl} download={`pulsegraph-flow.${exportType}`} className="gif-toast-btn"
-            style={{ background: exportType === 'png' ? 'linear-gradient(135deg, var(--accent), var(--accent-2))' : 'linear-gradient(135deg, #10B981, #34D399)' }}
-            onClick={() => setTimeout(() => setGifUrl(null), 500)}>
-            ⬇ Download pulsegraph-flow.{exportType}
-          </a>
-          <button className="gif-toast-close" onClick={() => setGifUrl(null)}>✕</button>
-        </div>
-      )}
-
-        {/* ── Idle hero ── */}
-      {appState === 'idle' && (
-        <div className="idle-hero">
-          <div className="idle-glow" />
-          <h1 className="idle-title">
-            Describe your architecture.<br />
-            <span>Watch it come alive.</span>
-          </h1>
-          <p className="idle-subtitle">
-            Paste any <strong>Mermaid diagram</strong>, describe a system in plain English, or sketch any process flow — PulseGraph turns it into a live animated diagram.
-          </p>
-          <div className="idle-input-wrap">
-            <textarea
-              id="idle-chat-input"
-              className="idle-input"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleIdleSubmit(); } }}
-              placeholder="Paste Mermaid code, or describe any flow in plain English…"
-              rows={3}
-              disabled={isLoading}
-            />
-            <button id="idle-send-btn" className="btn-primary idle-send"
-              onClick={handleIdleSubmit} disabled={isLoading || !input.trim()}>
-              {isLoading ? <span className="thinking-dots"><span/><span/><span/></span>
-                : <>Generate Diagram <span>→</span></>}
-            </button>
-          </div>
-          <div className="example-pills">
-            {EXAMPLES.map((ex) => (
-              <button key={ex} className="example-pill" onClick={() => submitMessage(ex)} disabled={isLoading}>
-                {ex.length > 60 ? ex.slice(0, 57) + '…' : ex}
-              </button>
-            ))}
-          </div>
-          <button className="btn-change-provider" onClick={handleResetConfig}>
-            ⚙️ Change AI Model / Key
-          </button>
-          {error && <p className="error-msg">{error}</p>}
-        </div>
-      )}
       </div>
+      {diagram && (
+        <div className="document-status" role="status">
+          {workspace.saved
+            ? 'Draft saved in this browser'
+            : 'Browser storage unavailable — export your document to keep it'}
+        </div>
+      )}
+      {busy && (
+        <div className="operation-status" role="status">
+          {exporting ? 'Exporting… ' + exportProgress + '%' : 'Working…'}
+          <button className="btn-icon" onClick={() => operation.current?.abort()}>
+            Cancel
+          </button>
+        </div>
+      )}
+      {error && (
+        <div className="error-toast" role="alert">
+          <span>{error}</span>
+          <button
+            className="btn-icon"
+            onClick={() => setError('')}
+            aria-label="Dismiss error"
+          >
+            ×
+          </button>
+        </div>
+      )}
+      {settingsOpen && (
+        <ApiKeyModal
+          provider={provider}
+          model={model}
+          hasApiKey={Boolean(apiKey)}
+          onClose={() => setSettingsOpen(false)}
+          onSave={(key, nextProvider, nextModel) => {
+            if (key) {
+              writeSessionApiKey(key);
+              setApiKey(key);
+            }
+            setProvider(nextProvider);
+            setModel(nextModel);
+            writePreference('pulsegraph_llm_provider', nextProvider);
+            writePreference('pulsegraph_ollama_model', nextModel);
+            setSettingsOpen(false);
+          }}
+          onReset={() => {
+            clearSessionApiKey();
+            setApiKey('');
+            setProvider('deepseek');
+            setModel('gemma3:4b');
+            writePreference('pulsegraph_llm_provider', null);
+            writePreference('pulsegraph_ollama_model', null);
+            setSettingsOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -9,8 +9,9 @@ import { parseMermaid } from '../src/parser/mermaidParser.ts';
 import { computeLevels, maxLevel } from '../src/lib/graphLevels.ts';
 import { sanitizeAnimationCss, sanitizeClassName } from '../src/lib/sanitizeCss.ts';
 
-const ids = (g: ReturnType<typeof parseMermaid>) => g.nodes.map(n => n.id).sort();
-const edgePairs = (g: ReturnType<typeof parseMermaid>) => g.edges.map(e => `${e.from}->${e.to}`).sort();
+const ids = (g: ReturnType<typeof parseMermaid>) => g.nodes.map((n) => n.id).sort();
+const edgePairs = (g: ReturnType<typeof parseMermaid>) =>
+  g.edges.map((e) => `${e.from}->${e.to}`).sort();
 
 // ── Chained edges ─────────────────────────────────────────────────────────────
 
@@ -27,9 +28,9 @@ test('landing-page example #1 (chain after a labeled edge) parses fully', () => 
   );
   assert.deepEqual(ids(g), ['A', 'B', 'C', 'D']);
   assert.deepEqual(edgePairs(g), ['A->B', 'B->C', 'B->D', 'D->B']);
-  assert.equal(g.nodes.find(n => n.id === 'B')!.type, 'gateway');
-  assert.equal(g.edges.find(e => e.to === 'C')!.label, 'Yes');
-  assert.equal(g.edges.find(e => e.to === 'D')!.label, 'No');
+  assert.equal(g.nodes.find((n) => n.id === 'B')!.type, 'gateway');
+  assert.equal(g.edges.find((e) => e.to === 'C')!.label, 'Yes');
+  assert.equal(g.edges.find((e) => e.to === 'D')!.label, 'No');
   assert.equal(g.warnings?.length, 0);
   assert.equal(g.layout, 'TB');
 });
@@ -108,12 +109,21 @@ test('parallel edges with DIFFERENT labels are both kept', () => {
 // ── Node shapes ───────────────────────────────────────────────────────────────
 
 test('shape → type mapping matches the README table', () => {
-  const g = parseMermaid([
-    'flowchart LR',
-    'U((User))', 'DB[(Store)]', 'CA[/Cache/]', 'GW{Router}',
-    'SV[Service]', 'CL(Client)', 'LB[[Balancer]]', 'Q>Queue]', 'HX{{Hex}}',
-  ].join('\n'));
-  const typeOf = (id: string) => g.nodes.find(n => n.id === id)!.type;
+  const g = parseMermaid(
+    [
+      'flowchart LR',
+      'U((User))',
+      'DB[(Store)]',
+      'CA[/Cache/]',
+      'GW{Router}',
+      'SV[Service]',
+      'CL(Client)',
+      'LB[[Balancer]]',
+      'Q>Queue]',
+      'HX{{Hex}}',
+    ].join('\n'),
+  );
+  const typeOf = (id: string) => g.nodes.find((n) => n.id === id)!.type;
   assert.equal(typeOf('U'), 'user');
   assert.equal(typeOf('DB'), 'database');
   assert.equal(typeOf('CA'), 'cache');
@@ -127,7 +137,7 @@ test('shape → type mapping matches the README table', () => {
 
 test('late shape definition upgrades an earlier plain reference', () => {
   const g = parseMermaid('flowchart LR\nB --> C\nB{Is valid?}');
-  const b = g.nodes.find(n => n.id === 'B')!;
+  const b = g.nodes.find((n) => n.id === 'B')!;
   assert.equal(b.label, 'Is valid?');
   assert.equal(b.type, 'gateway');
 });
@@ -135,14 +145,16 @@ test('late shape definition upgrades an earlier plain reference', () => {
 // ── Subgraphs / directions / warnings ─────────────────────────────────────────
 
 test('subgraph members are collected, direction lines skipped', () => {
-  const g = parseMermaid('flowchart TB\nsubgraph Backend\ndirection LR\nA --> B\nend\nB --> C');
+  const g = parseMermaid(
+    'flowchart TB\nsubgraph Backend\ndirection LR\nA --> B\nend\nB --> C',
+  );
   assert.equal(g.groups!.length, 1);
   assert.deepEqual([...g.groups![0].members].sort(), ['A', 'B']);
 });
 
-test('RL maps to LR, BT maps to TB', () => {
-  assert.equal(parseMermaid('flowchart RL\nA --> B').layout, 'LR');
-  assert.equal(parseMermaid('flowchart BT\nA --> B').layout, 'TB');
+test('reverse directions are preserved', () => {
+  assert.equal(parseMermaid('flowchart RL\nA --> B').layout, 'RL');
+  assert.equal(parseMermaid('flowchart BT\nA --> B').layout, 'BT');
 });
 
 test('un-parseable lines produce warnings instead of silent garbage', () => {
@@ -165,16 +177,20 @@ test('computeLevels: linear chain has increasing levels; cycle members get fallb
 
 // ── CSS sanitizer ─────────────────────────────────────────────────────────────
 
-test('sanitizeAnimationCss allows plain keyframes, rejects exfiltration vectors', () => {
-  const ok = '@keyframes float { 0% { transform: translateY(0); } 100% { transform: translateY(-10px); } } .ai-float { animation: float 3s infinite; }';
-  assert.equal(sanitizeAnimationCss(ok), ok);
-  assert.equal(sanitizeAnimationCss('.x { background: url(https://evil.example/p) }'), '');
+test('legacy authored CSS is always rejected', () => {
+  const ok =
+    '@keyframes float { 0% { transform: translateY(0); } 100% { transform: translateY(-10px); } } .ai-float { animation: float 3s infinite; }';
+  assert.equal(sanitizeAnimationCss(ok), '');
+  assert.equal(
+    sanitizeAnimationCss('.x { background: url(https://evil.example/p) }'),
+    '',
+  );
   assert.equal(sanitizeAnimationCss('@import "https://evil.example/x.css";'), '');
   assert.equal(sanitizeAnimationCss('.x { color: red } </style><script>1</script>'), '');
 });
 
-test('sanitizeClassName only accepts simple identifiers', () => {
-  assert.equal(sanitizeClassName('ai-float'), 'ai-float');
+test('legacy authored animation classes are rejected', () => {
+  assert.equal(sanitizeClassName('ai-float'), '');
   assert.equal(sanitizeClassName('x; background:url(a)'), '');
   assert.equal(sanitizeClassName('1bad'), '');
 });

@@ -1,110 +1,203 @@
 # ⚡ PulseGraph
 
-PulseGraph is a premium, chat-first architecture animation tool. It converts natural language descriptions—or complex raw Mermaid code—into high-fidelity, animated system diagrams with glowing data flows, nested clustering, and interactive panning and zooming.
+**Turn an idea or Mermaid flowchart into a lively, editable diagram.**
 
-## ✨ Key Features
+PulseGraph is a browser-based workspace built with React, TypeScript, Dagre and
+GSAP. Use it to explain architecture, request flows, decisions, and delivery pipelines.
 
-- **Interactive Chat-Based Iteration**:
-  - Converse directly with the AI in a side panel to incrementally add nodes, expand flows, or refine the layout step-by-step.
-  
-- **Dual View Canvas Modes**:
-  - **Classic Mode**: Clean, simple lines, and basic node shapes.
-  - **Rich Icons Mode**: Modern styling with custom SVG icons (AI agents, OAuth locks, search, cloud, databases, queues, caches, payments) and premium glassmorphism gradients and glowing effects.
+Start with an example or paste Mermaid—no account or API key required.
+Connect DeepSeek or local Ollama when you want to describe changes in plain English.
 
-- **Multi-Model AI Hub**:
-  - **Local (Privacy First)**: Fully offline support using **Ollama** (recommended: `gemma3:4b`). Keep your sensitive enterprise architectures completely on your local machine.
-  - **Cloud (High Capability)**: Support for **DeepSeek** cloud API for handling exceptionally complex logic.
-  - Features an intuitive UI toggle to switch between providers/models seamlessly.
-  
-- **Deterministic Mermaid Parser** (`src/parser/mermaidParser.ts`):
-  - A tokenizing parser that handles chained edges (`A --> B --> C`), multi-node shorthand (`A & B --> C`), both edge-label forms (`-->|x|` and `-- x -->`), open links (`---`), cross/circle arrowheads (`--x`, `--o`), dashed `-.->` paths, and **infinitely nested subgraphs** with HTML line breaks (`<br/>`).
-  - Identical repeated edges are de-duplicated; anything the parser cannot understand is reported in `Graph.warnings` (surfaced in the chat) instead of silently producing garbage nodes.
-  - Built over Dagre's compound **multigraph** layout, so parallel edges with different labels keep separate routes and parent groups precisely encapsulate their nested children without overlapping.
+![PulseGraph workspace](docs/workspace.png)
 
-- **Interactive Glowing Canvas**:
-  - **Pan & Zoom**: Fluid drag-to-pan and scroll-to-zoom functionality, equipped with UI-based zoom controls (In, Out, Reset).
-  - **GSAP Animations**: Continuous micro-animations (spinning load balancers, database scans, pulse markers) and path-following flow animations that simulate live data travel.
+## Features
 
-- **✨ AI Presentation & ⬇ Export PNG** (two-step workflow):
-  - **Step 1 — AI Presentation**: sends your current diagram to the LLM, which reinterprets it into a clean, *sectioned* architecture layout. The AI assigns every node a semantic **role** — `lead-in` (client/entry), `pipeline` (the core sequential stages), `service` (shared systems the pipeline calls, e.g. a database or an AI gateway), or `output` (terminal artifacts/reports) — and the animated canvas re-lays the diagram by role: entry nodes on the left, the pipeline in one row, services in a band below with dashed "call" edges, outputs stacked on the right.
-  - **Step 2 — Export PNG** (enabled once Step 1 has run): renders the *same* role-based layout through a dedicated static SVG generator (`src/render/blueprintSvg.ts`) styled like a professional architecture slide — light theme, numbered pipeline stages, labeled zone boxes, color-coded service accents — and downloads it as a high-resolution PNG. This is intentionally a separate, static renderer: the clean "designed slide" look is a different aesthetic from the animated glassmorphism canvas, not just a style tweak on top of it.
-  - The **Export PNG** button stays visible but disabled (with an explanatory tooltip) until Step 1 has produced roles for the current diagram — it never appears/disappears, so it's always clear what to do next.
+- Classic and Rich SVG diagrams with animated flow markers and icons.
+- Direct Mermaid editing, mouse/touch pan, keyboard zoom, and Play/Pause.
+- Local draft recovery, 20-step undo/redo, source import, editable JSON import/export.
+- AI generation and refinement with cancellable requests and validated responses.
+- Presentation assigns semantic roles, adapts labels and geometry to the flow, and
+  retains every original node, label and edge.
+- PNG, GIF, SVG, Mermaid, editable JSON, and presentation Slide PNG exports.
 
-- **Ultra-High-Resolution Exporter (PNG & GIF)**:
-  - **Vector-Sharp 5.0x Scaling**: Renders vector-sharp text and borders at 5x target density (capping at 4096px for GIFs).
-  - **Wrapper `<g>` Upscaling**: Sets root `viewBox` to exactly match the target output dimensions (`0 0 targetW targetH`). Scales all child elements internally inside a `<g>` wrapper to bypass browser-specific downscaling/stretching rasterization bugs.
-  - **Export frame sizes**: choose how the canvas export is fitted — `fit to content` (tight crop, default), `16:9` / `16:10` / `4:3` (slide aspect ratios), `1:1` (square), or `A4 landscape/portrait` (documents). All use a uniform "contain" scale so the diagram is centred and never stretched.
-  - **Main-Thread GIF Encoding**: Offloads encoding directly to the main thread (bypassing Web Worker caching and path resolution bugs) with regular micro-yields (`setTimeout(r, 0)`) to maintain UI responsiveness.
-  - **Downsampled Quantization**: Implements a pixel downsampler (`getFastPalette`) that samples at most 10,000 pixels for palette generation, yielding a **100x speedup** (under 2ms) and eliminating encoding lags.
-  - Native "Save As" capabilities via the File System Access API.
+## Run locally
 
-## 🛠 Tech Stack
+Use **Node.js 24** and npm. A .nvmrc file is included.
 
-- **Frontend**: React 19, TypeScript, Vite
-- **Animations & Layout**: GSAP (MotionPathPlugin), Dagre (Compound Graphs)
-- **AI Integration**: DeepSeek (Cloud), Ollama (Local)
-- **GIF/PNG Rendering**: custom native SVG-to-canvas rendering with `gifenc` (main-thread execution)
-- **Tests**: dependency-free `node:test` suite over the Mermaid parser, level computation, and CSS sanitizer — run with `npm test`
+    npm ci
+    npm run dev
 
-## 🚀 Getting Started
+Open the URL printed by Vite and click **Request flow**, or paste:
 
-### 1. Installation
+    flowchart LR
+      U((User)) --> API[API Gateway]
+      API --> AUTH[Auth Service]
+      API --> S[Product Service]
+      S --> DB[(PostgreSQL)]
+      S -.-> CACHE[/Redis/]
 
-```bash
-# Clone the repository
-git clone <repo-url>
-cd PulseGraph
+Use **Workspace → Edit Mermaid source** to change the diagram. Invalid input preserves
+your current diagram. **Workspace → Reset workspace** clears the saved draft and starts
+fresh. In chat, Ctrl/⌘ + Enter sends; Enter inserts a new line.
 
-# Install dependencies
-npm install
-```
+## Optional AI
 
-### 2. Configuration & Model Setup
+**DeepSeek:** Open **AI settings** on the landing page (or **Workspace → AI settings**
+in the workspace), choose DeepSeek, and enter your
+[API key](https://platform.deepseek.com/api_keys). Requests go directly to DeepSeek.
+The key stays in memory until reload; it is never written to localStorage,
+the project, or exported documents.
 
-Upon launching the app, you will be prompted with the **Provider Configuration Hub**.
+**Ollama:** Run a local model at localhost:11434, choose Ollama in settings,
+and enter the installed model name (for example gemma3:4b). Allow only the
+application origins you use:
 
-*   **For Cloud (DeepSeek)**: Enter your API key. (Saved securely to your browser's `localStorage`).
-*   **For Local (Ollama)**: 
-    1. Install [Ollama](https://ollama.com/).
-    2. Pull the recommended model: `ollama pull gemma3:4b`.
-    3. Ensure CORS is enabled for web browser access by setting the environment variable `OLLAMA_ORIGINS="*"` before starting the Ollama server.
+    # macOS/Linux: manually started server
+    OLLAMA_ORIGINS="http://localhost:5173,http://127.0.0.1:5173" ollama serve
 
-### 3. Development
+    # PowerShell: manually started server
+    $env:OLLAMA_ORIGINS="http://localhost:5173,http://127.0.0.1:5173"
+    ollama serve
 
-```bash
-# Start development server
-npm run dev
+For an existing Ollama application/service, configure its environment and restart
+it instead of starting a second server. Match the origins to Vite's actual URL.
+For local-only processing, disable Ollama cloud features with OLLAMA_NO_CLOUD=1
+and choose a local model. See the [official FAQ](https://docs.ollama.com/faq).
 
-# Build for production
-npm run build
+Cloud requests time out after 60 seconds; local requests after 180 seconds.
+**Cancel** stops a request. No automatic retries incur extra charges.
+Model mistakes remain possible; inspect the output and use Undo when needed.
 
-# Preview production build
-npm run preview
-```
+## Presentation and exports
 
-## 📐 Node Type Mapping
+1. Generate or import a diagram.
+2. Choose **Presentation** to assign entry, pipeline, service and output roles.
+3. Choose **Export → Slide PNG** for a light presentation design.
 
-PulseGraph parses Mermaid shape syntax to automatically assign beautiful icons and styling rules:
+Presentation arranges nodes into semantic zones, wraps long stage sequences into
+compact rows, and routes branches and retries around the cards. Titles and zones adapt to request, delivery, decision, and general process
+flows instead of assuming every diagram is client/backend architecture. Slide PNG
+remains disabled until roles exist. Source edits clear the roles; choose Presentation
+again for the new diagram.
 
-| Mermaid Syntax | Shape | Node Type |
-|---|---|---|
-| `A((Label))` | Circle | **User** |
-| `A[(Label)]` | Cylinder | **Database** |
-| `A[/Label/]` | Parallelogram | **Cache / Queue** |
-| `A{Label}` | Diamond | **Gateway / Router** |
-| `A[Label]` | Rectangle | **Service / Backend** |
-| `A(Label)` | Rounded | **Client / Frontend** |
+| Format            | Output                                                       |
+| ----------------- | ------------------------------------------------------------ |
+| PNG               | Settled diagram, up to 2,560 px on the long edge             |
+| GIF               | Three-second moving-flow-marker loop, 15 fps, up to 2,560 px |
+| Slide PNG         | Separate light-theme renderer; same frame-size choices       |
+| SVG               | Settled vector diagram                                       |
+| Mermaid source    | Portable .mmd source                                         |
+| Editable document | Versioned JSON with source and presentation roles            |
 
-## 📁 Project Structure
+Raster frames: content fit, 16:9, 16:10, 4:3, square, A4 landscape and portrait.
+GIF encoding runs in a worker, one transferred frame at a time. Exports use an
+isolated snapshot and never seek the live GSAP timeline. GIFs animate flow
+markers; they do not reproduce every live icon animation.
 
-- `src/services/llmService.ts`: Manages multi-model routing, prompt normalization, and the validation pipeline. Also holds the **AI Presentation** designer prompt (`DESIGN_PROMPT`) and `designPresentation()`, which asks the LLM to reinterpret a diagram and assign each node a layout `role`.
-- `src/parser/mermaidParser.ts`: The recursive AST parser tracking deep subgraph nesting and syntactic edge cases.
-- `src/parser/layoutEngine.ts`: Two layout strategies — `computeLayout()` (the default, automatic Dagre layout for every diagram) and `roleBlueprintLayout()` (positions nodes by their AI-assigned semantic role — lead-in / pipeline / service / output — for the AI Presentation view and PNG export).
-- `src/render/blueprintSvg.ts`: `buildBlueprintSvg()` — a standalone, static SVG generator that renders a role-laid-out graph as a clean, presentation-quality architecture slide (light theme, numbered stages, zone boxes). Powers the **Export PNG** button; independent of the animated canvas renderers below.
-- `src/components/DiagramCanvas.tsx`: SVG renderer handling GSAP animations, panning, zooming, and dynamic encapsulation boxes in Classic mode.
-- `src/components/RichDiagramCanvas.tsx`: Modern SVG renderer utilizing custom inline SVG icons, glassmorphism filters, glows, and GSAP micro-animations.
-- `src/services/gifExporter.ts`: Manages the main-thread high-resolution PNG and GIF exporting (including the export frame sizes above), inline font styling, and downsampled quantization.
+## Supported Mermaid subset
 
-## 📄 License
+PulseGraph uses its own flowchart parser, **not the complete Mermaid language**.
 
-MIT
+Supported: LR/RL/TB/TD/BT directions, chains, multi-node ampersand shorthand,
+quoted labels, semicolon-separated statements, pipe/inline edge labels, dashed,
+thick, open, cross and circle edges, and nested subgraphs.
+Use `<br/>` inside a label for a line break.
+
+| Shape                       | Node treatment |
+| --------------------------- | -------------- |
+| A((User))                   | User           |
+| A(Client)                   | Client         |
+| A[Service]                  | Service        |
+| A[(Database)]               | Database       |
+| A[/Cache/]                  | Cache          |
+| A>Queue]                    | Queue          |
+| A{Decision} or A{{Gateway}} | Gateway        |
+| A[[Balancer]]               | Load balancer  |
+
+Rich mode also chooses icons from names such as Redis, Auth, Stripe and LLM.
+Sequence/class diagrams, click actions, custom CSS/classes, subgraph direction
+overrides and unsupported directives are rejected with an explanation. Inline class
+suffixes are ignored; bidirectional arrows are not supported.
+
+Limits: 30,000 source characters, 100 nodes, 300 edges and 100 KB imported
+documents. Dense graphs can remain hard to read; split them into smaller views.
+Presentation labels may be shortened to fit cards; original labels stay in the
+source and editable document.
+
+## Privacy and security
+
+Local Mermaid editing and exports make no external font, analytics or telemetry
+requests. Ollama traffic goes to localhost, but cloud-hosted Ollama models can
+themselves use the network. DeepSeek receives your description, current diagram
+and recent chat context when you use cloud AI.
+
+Draft source and roles are stored in this browser's localStorage; chat is
+session-only. Avoid shared browser profiles for confidential drafts. Clearing
+site data removes drafts and preferences. Export an editable document for backup.
+
+Model-authored CSS is not executed. Responses, roles and source are validated
+before updating the document. Production builds include a Content Security Policy.
+Deployment servers should additionally set frame-ancestors in a CSP response
+header. See [SECURITY.md](SECURITY.md).
+
+## Development
+
+    npm run format
+    npm run verify
+    npx playwright install chromium
+    npm run test:e2e
+    npm audit
+    npm run preview
+
+To test the production build and its security policy in PowerShell:
+
+    $env:PLAYWRIGHT_PRODUCTION="1"
+    npm run test:e2e
+
+If the browser download is unavailable, use installed Chrome locally:
+
+    # PowerShell
+    $env:PLAYWRIGHT_CHANNEL="chrome"
+    npm run test:e2e
+
+CI uses Node 24, a clean install, formatting, lint, strict TypeScript/build,
+unit tests, dependency audit, and Chromium end-to-end tests. Automated provider
+tests are mocked and never require a real key; live providers need a separate
+smoke test.
+
+Regressions cover parsing, malformed AI output, graph preservation, document
+round trips, framing limits, cycles, self-loops and a 100-graph routing corpus.
+Browser tests cover editing, recovery, real exports, cancellation, mobile layout
+and reduced motion.
+
+### Local architecture graph
+
+Contributors can build a local, queryable code map with
+[Graphify](https://github.com/Graphify-Labs/graphify):
+
+    uv tool install graphifyy
+    graphify update .
+    graphify query "How does diagram input reach the renderers?"
+
+The generated `graphify-out/` directory is intentionally ignored. Refresh it after
+code changes; the code-only update is local and does not require an API key.
+
+## Structure
+
+    src/
+      App.tsx                   Workspace orchestration
+      components/               Chat, settings, editor, Classic and Rich canvases
+      parser/                   Parsing, Dagre and semantic role layouts
+      render/blueprintSvg.ts     Static presentation renderer
+      services/
+        llmService.ts           AI workflows
+        llmClient.ts            Bounded, cancellable provider transport
+        llmValidation.ts        Runtime validation
+        llmPrompts.ts           Model instructions
+        gifExporter.ts          Snapshot/raster export
+        gif.worker.ts           Background GIF encoding
+        exportGeometry.ts       Shared frame geometry
+      lib/                      Documents, roles, routing and viewport utilities
+    tests/                      Unit regressions and Playwright workflows
+
+[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT License](LICENSE)

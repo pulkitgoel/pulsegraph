@@ -1,138 +1,27 @@
-import type { Graph, ChatMessage, LlmProvider, OllamaModel } from '../types';
-import { parseMermaid, looksLikeMermaid } from '../parser/mermaidParser';
-import { sanitizeAiAnimations } from '../lib/sanitizeCss';
+import type { ChatMessage, Graph, LlmProvider, OllamaModel } from '../types';
+import { looksLikeMermaid } from '../parser/mermaidParser';
+import { validateRoles } from '../lib/roles';
+import { requestCompletion } from './llmClient';
+import { GENERATE_DIAGRAM_PROMPT, PRESENTATION_ROLES_PROMPT } from './llmPrompts';
+import { parseDiagram } from './llmValidation';
 
-const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
-const OLLAMA_API_URL = 'http://localhost:11434/v1/chat/completions';
+export { parseDiagram } from './llmValidation';
 
-// ── Pass 1 — Generate canonical Mermaid from user intent ─────────────────────
-const GENERATE_PROMPT = `You are a diagram architect. Convert the user's input into a valid Mermaid flowchart, an animation sequence, and custom CSS animations.
-
-STRICT OUTPUT RULES:
-- Output a RAW JSON object ONLY. No markdown fences (\`\`\`), no explanation, no preamble.
-- The JSON MUST have exactly three keys: "mermaidCode", "animationSteps", and "aiAnimations".
-- "mermaidCode" must be a string containing the raw Mermaid flowchart code (starting with "flowchart LR" or "flowchart TD").
-- "animationSteps" must be an array of arrays of strings. Each inner array contains the node IDs that should animate in together at that step.
-- "aiAnimations" must be an object with two keys: "cssKeyframes" (raw CSS @keyframes definitions) and "nodeClasses" (a map of node IDs to the CSS class names you generated).
-- IMPORTANT: You have full freedom to write CSS keyframes for floating, bouncing, pulsing, or glowing. Arrange the CSS correctly according to the flow or architecture.
-- CONTEXT PRESERVATION: If the user provides an existing Mermaid diagram in the "Context" and asks for visual/appearance changes, you MUST keep the original nodes, edges, and labels EXACTLY the same. Only append inline 'style' directives (e.g. style A fill:#ff0000) to the mermaidCode, or update the 'aiAnimations'. DO NOT use classDef.
-- Example: {"mermaidCode": "flowchart LR\\nA[User] --> B[API]", "animationSteps": [["A"], ["B"]], "aiAnimations": {"cssKeyframes": "@keyframes float { 0% { transform: translateY(0); } 50% { transform: translateY(-10px); } 100% { transform: translateY(0); } } .ai-float { animation: float 3s ease-in-out infinite; }", "nodeClasses": {"A": "ai-float", "B": "ai-float"}}}
-- Use node SHAPES to encode semantic type:
-    A[Label]     = service / process / backend
-    A(Label)     = client / frontend / browser
-    A{Label}     = gateway / router / decision / load balancer
-    A[(Label)]   = database / storage (SQL, NoSQL)
-    A[/Label/]   = cache / queue (Redis, Kafka, RabbitMQ)
-    A((Label))   = user / actor / person
-- ALWAYS convert to Flowcharts. If the user asks for a Mindmap or Sequence Diagram, TRANSLATE their intent into a "flowchart TD".
-- If input is unrelated to diagrams: output exactly: {"mermaidCode": "OFFTOPIC", "animationSteps": [], "aiAnimations": {"cssKeyframes": "", "nodeClasses": {}}}`;
-
-// ── Pass 2 — Validate and correct the generated Mermaid ──────────────────────
-const VALIDATE_PROMPT = `You are a technical diagram reviewer. Given a JSON object with Mermaid flowchart code, animation steps, and aiAnimations, validate and correct it.
-
-CHECK FOR:
-1. Syntax errors: Ensure the Mermaid code is valid.
-2. Animation sequence: Does the animation order logically follow the data flow?
-3. Ensure aiAnimations are preserved and semantically match the nodes.
-
-CRITICAL RULE:
-- DO NOT alter the topology (do not add/remove nodes, do not change edges or labels) unless fixing a strict syntax error. 
-- Respect the user's original architecture exactly as provided.
-
-OUTPUT RULES:
-- Output a RAW JSON object ONLY. No markdown fences (\`\`\`), no explanation.
-- The JSON MUST have exactly three keys: "mermaidCode", "animationSteps", and "aiAnimations".
-- Example: {"mermaidCode": "...", "animationSteps": [["A"], ["B"]], "aiAnimations": {"cssKeyframes": "...", "nodeClasses": {"A": "..."}}}
-- If it's already correct, output it UNCHANGED in the exact same JSON format.`;
-
-// ── Presentation "Designer" — reinterprets a diagram into a polished, sectioned layout ──
-const DESIGN_PROMPT = `You are a senior diagram DESIGNER. You are given an existing Mermaid flowchart. \
-Reinterpret it into a clean, PRESENTATION-QUALITY flowchart that tells the SAME story more clearly — like a slide in an architecture deck.
-
-KEEP THE MEANING: do NOT invent or drop steps. Every node and connection in the input must still be represented. You may rename labels for clarity and re-group, but keep the same components and flow.
-
-MAKE IT LOOK DESIGNED:
-1. Give each node a TWO-LINE label: a short title, then a brief descriptor, using <br/>. Example: API[Backend API<br/>FastAPI]. The two lines MUST be different — never repeat the title as the descriptor. If there is no meaningful descriptor, use a single-line label instead.
-2. Use DASHED edges (-.->) for secondary / asynchronous / AI / side calls, and SOLID edges (-->) for the main data flow. Label key edges with |short text| where it adds clarity.
-3. Apply SEMANTIC fill colors with style directives (one per line): style <id> fill:#hex,stroke:#hex,color:#ffffff.
-   Suggested palette — main flow: #6D3BFF (indigo); AI / LLM nodes: #8B5CF6 (purple); data / storage / outputs: #10B981 (green); deterministic / compute: #14B8A6 (teal); client/user: #1E293B (dark).
-4. Prefer a left-to-right main flow (flowchart LR).
-
-ROLES (CRITICAL — this drives the layout):
-Assign EVERY node a role in a "roles" map (nodeId -> role). Use exactly these four values:
-- "lead-in":  entry / client-side nodes before the core processing (user, browser, frontend, gateway, API). Placed as a row on the left.
-- "pipeline": the core sequential processing stages — the backbone of the flow. Placed together in one row and treated as THE pipeline. Only put the main chain here.
-- "service":  shared/side systems the pipeline calls or reads (AI/LLM gateway, cache, database, config/rules, auth). Placed in a band BELOW the pipeline. Their edges should be dashed.
-- "output":   terminal results / artifacts (reports, files, dashboards, notifications). Placed stacked on the right.
-Every node id that appears in mermaidCode MUST have a role.
-
-STRICT OUTPUT RULES:
-- Output a RAW JSON object ONLY. No markdown fences, no explanation.
-- Exactly four keys: "mermaidCode", "roles", "animationSteps", "aiAnimations".
-- "roles": object mapping every node id to one of lead-in | pipeline | service | output.
-- "animationSteps": array of arrays of node IDs, ordered by flow depth (roots first).
-- "aiAnimations": { "cssKeyframes": "...", "nodeClasses": { "id": "class" } } — add subtle float/pulse/glow to a few hero nodes; may be empty objects/strings.
-- Example: {"mermaidCode":"flowchart LR\\nU((User)) --> API[Backend API<br/>FastAPI]\\nAPI --> P1[Parse<br/>spec]\\nP1 -.-> AI[LLM<br/>gateway]\\nP1 --> R[Report<br/>.docx]\\nstyle API fill:#6D3BFF,stroke:#6D3BFF,color:#ffffff","roles":{"U":"lead-in","API":"lead-in","P1":"pipeline","AI":"service","R":"output"},"animationSteps":[["U"],["API"],["P1"]],"aiAnimations":{"cssKeyframes":"","nodeClasses":{}}}`;
-
-// ── LLM helper ────────────────────────────────────────────────────────────────
-async function callLLM(
-  systemPrompt: string,
-  userContent: string,
-  history: ChatMessage[],
-  apiKey: string,
-  provider: LlmProvider,
-  ollamaModel: OllamaModel = 'gemma3:4b',
-  temperature = 0.1,
-): Promise<string> {
-  const url = provider === 'deepseek' ? DEEPSEEK_API_URL : OLLAMA_API_URL;
-  const model = provider === 'deepseek' ? 'deepseek-chat' : ollamaModel;
-  
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (provider === 'deepseek') {
-    if (/[^\x00-\x7F]/.test(apiKey)) {
-      throw new Error('Your DeepSeek API key contains invalid characters (e.g. emojis or foreign text). Please click "Change AI Model / Key" below to reset it.');
-    }
-    headers['Authorization'] = `Bearer ${apiKey}`;
-  }
-
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    ...history.slice(-4).map(m => ({ role: m.role, content: m.content })),
-    { role: 'user', content: userContent },
-  ];
-
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature,
-      max_tokens: 2000,
-    }),
-  });
-  
-  if (!resp.ok) {
-    const errorText = await resp.text();
-    const providerName = provider === 'deepseek' ? 'DeepSeek' : 'Ollama';
-    throw new Error(`${providerName} API ${resp.status}: ${errorText}`);
-  }
-  
-  const data = await resp.json();
-  const raw: string = data.choices[0]?.message?.content ?? '';
-  // Strip markdown fences if LLM added them despite instructions
-  return raw.replace(/^```(?:mermaid)?\n?/i, '').replace(/\n?```$/i, '').trim();
-}
-
-// ── Public API ────────────────────────────────────────────────────────────────
 export interface SendMessageResult {
   message: string;
   graph: Graph | null;
   mermaidSource: string;
   isOffTopic: boolean;
-  roles?: Record<string, string>; // node id -> role (present for presentation/designer output)
+  roles?: Record<string, string>;
 }
 
+type ProgressCallback = (step: 'generating' | 'validating' | 'rendering') => void;
+
+function comparableSource(source: string): string {
+  return source.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** Direct Mermaid stays local; natural-language requests use one AI call. */
 export async function sendMessage(
   userMessage: string,
   history: ChatMessage[],
@@ -140,141 +29,109 @@ export async function sendMessage(
   apiKey: string,
   provider: LlmProvider,
   ollamaModel: OllamaModel = 'gemma3:4b',
-  onStep?: (step: 'generating' | 'validating' | 'rendering') => void,
+  onStep?: ProgressCallback,
+  signal?: AbortSignal,
 ): Promise<SendMessageResult> {
+  let source = userMessage.trim();
 
-  // ── Pass 1 ─ Generate Mermaid ───────────────────────────────────────────────
-  let mermaidDraft: string;
+  if (!looksLikeMermaid(source)) {
+    onStep?.('generating');
 
-  if (looksLikeMermaid(userMessage)) {
-    const lowerMessage = userMessage.trim().toLowerCase();
-    const unsupportedPrefixes = ['sequencediagram', 'statediagram', 'classdiagram', 'erdiagram', 'gantt', 'pie', 'journey', 'mindmap', 'gitgraph', 'quadrantchart', 'xychart'];
-    
-    if (unsupportedPrefixes.some(prefix => lowerMessage.startsWith(prefix))) {
+    const currentSource = currentGraph?.mermaidSource?.trim();
+    const request = currentSource
+      ? {
+          operation: 'refine',
+          instruction: userMessage,
+          currentDiagram: currentSource,
+        }
+      : {
+          operation: 'create',
+          instruction: userMessage,
+        };
+
+    const response = await requestCompletion({
+      systemPrompt: GENERATE_DIAGRAM_PROMPT,
+      content: JSON.stringify(request),
+      history,
+      apiKey,
+      provider,
+      model: ollamaModel,
+      signal,
+    });
+
+    if (typeof response.mermaidCode !== 'string') {
+      throw new Error('The model did not return Mermaid code. Please retry.');
+    }
+
+    source = response.mermaidCode.trim();
+    if (source === 'OFFTOPIC') {
       return {
-        message: '❌ PulseGraph currently only supports **Flowcharts** and **Graphs** (e.g., `flowchart LR`). \n\nPlease convert your diagram to flowchart syntax, or describe your system in plain text so the AI can generate a supported diagram for you.',
+        message: 'Describe a system or process, or paste a Mermaid flowchart.',
         graph: null,
-        mermaidSource: userMessage,
+        mermaidSource: '',
         isOffTopic: true,
       };
     }
 
-    // User already gave us supported Mermaid. If it parses cleanly, skip BOTH
-    // LLM passes — an extra "validation" round trip costs latency/money and
-    // gives the model licence to rewrite input that was already correct.
-    const direct = parseMermaid(userMessage);
-    if (direct.nodes.length > 0 && !(direct.warnings && direct.warnings.length)) {
-      onStep?.('rendering');
-      direct.mermaidSource = userMessage.trim();
-      return {
-        message: `Diagram ready — ${direct.nodes.length} nodes, ${direct.edges.length} connections.`,
-        graph: direct,
-        mermaidSource: userMessage.trim(),
-        isOffTopic: false,
-      };
+    if (currentSource && comparableSource(source) === comparableSource(currentSource)) {
+      throw new Error(
+        'The AI returned the current diagram without applying your instruction. Try again or make the change in Edit source.',
+      );
     }
-
-    // Didn't parse cleanly → let the LLM validate/correct it (Pass 2 only).
-    mermaidDraft = JSON.stringify({ mermaidCode: userMessage, animationSteps: [], aiAnimations: { cssKeyframes: "", nodeClasses: {} } });
-    onStep?.('validating');
-  } else {
-    onStep?.('generating');
-    // Provide conversation context only when actually refining an existing diagram
-    const contextNote = currentGraph?.mermaidSource
-      ? `\n\nContext (current diagram Mermaid — refine it based on the request):\n${currentGraph.mermaidSource}`
-      : '';
-    const pass1Input = userMessage + contextNote;
-    mermaidDraft = await callLLM(GENERATE_PROMPT, pass1Input, history, apiKey, provider, ollamaModel);
   }
 
-  // ── Off-topic guard ─────────────────────────────────────────────────────────
-  let pass1Parsed: any = null;
-  try {
-    const cleanJson = mermaidDraft.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
-    pass1Parsed = JSON.parse(cleanJson);
-  } catch (e) {
-    // ignore
-  }
-  const isOffTopic = pass1Parsed?.mermaidCode === 'OFFTOPIC' || mermaidDraft.trim().toUpperCase() === 'OFFTOPIC';
-
-  if (isOffTopic) {
-    return {
-      message: 'I only create diagrams. Describe any system, flow or architecture!',
-      graph: null,
-      mermaidSource: '',
-      isOffTopic: true,
-    };
-  }
-
-  // ── Pass 2 ─ Validate and correct ──────────────────────────────────────────
   onStep?.('validating');
-  const validatedRaw = await callLLM(VALIDATE_PROMPT, mermaidDraft, history, apiKey, provider, ollamaModel, 0.05);
-
-  let parsedResponse: { mermaidCode: string; animationSteps: string[][]; aiAnimations?: { cssKeyframes: string; nodeClasses: Record<string, string> } };
-  try {
-    const cleanJson = validatedRaw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
-    parsedResponse = JSON.parse(cleanJson);
-  } catch (e) {
-    // Fallback if parsing fails, try to extract Mermaid code as a string
-    parsedResponse = { mermaidCode: validatedRaw, animationSteps: [], aiAnimations: { cssKeyframes: '', nodeClasses: {} } };
-  }
-
-  const mermaidFinal = parsedResponse.mermaidCode.trim();
-
-  // ── Parse Mermaid → Graph ──────────────────────────────────────────────────
+  const graph = parseDiagram(source);
   onStep?.('rendering');
-  const graph = parseMermaid(mermaidFinal);
-  graph.animationSteps = parsedResponse.animationSteps;
-  graph.aiAnimations = sanitizeAiAnimations(parsedResponse.aiAnimations);
 
-  // Attach the Mermaid source so App can display it
-  graph.mermaidSource = mermaidFinal;
-
-  // Build a short human message from node/edge count (+ any parser warnings)
-  let msg = `Diagram ready — ${graph.nodes.length} nodes, ${graph.edges.length} connections.`;
-  if (graph.warnings && graph.warnings.length) {
-    msg += `\n\n⚠️ ${graph.warnings.length} line(s) couldn't be fully parsed:\n` +
-      graph.warnings.slice(0, 5).map(w => `• ${w}`).join('\n');
-  }
-
-  return { message: msg, graph, mermaidSource: mermaidFinal, isOffTopic: false };
+  return {
+    message:
+      'Diagram ready — ' +
+      graph.nodes.length +
+      ' nodes, ' +
+      graph.edges.length +
+      ' connections.',
+    graph,
+    mermaidSource: source,
+    isOffTopic: false,
+  };
 }
 
-/**
- * Reinterprets the current diagram into a polished, sectioned "presentation" layout
- * (zones, semantic colors, dashed side-calls) using the LLM, then parses it to a Graph.
- * The caller is responsible for running computeLayout on the returned graph.
- */
+/** The model assigns roles only; the original graph remains authoritative. */
 export async function designPresentation(
   currentMermaid: string,
   apiKey: string,
   provider: LlmProvider,
   ollamaModel: OllamaModel = 'gemma3:4b',
-  onStep?: (step: 'generating' | 'validating' | 'rendering') => void,
+  onStep?: ProgressCallback,
+  signal?: AbortSignal,
 ): Promise<SendMessageResult> {
-  if (!currentMermaid.trim()) {
-    return { message: 'Nothing to redesign yet — generate a diagram first.', graph: null, mermaidSource: '', isOffTopic: true };
-  }
-
+  const graph = parseDiagram(currentMermaid);
   onStep?.('generating');
-  const raw = await callLLM(DESIGN_PROMPT, currentMermaid, [], apiKey, provider, ollamaModel, 0.35);
 
+  const response = await requestCompletion({
+    systemPrompt: PRESENTATION_ROLES_PROMPT,
+    content: JSON.stringify({
+      nodes: graph.nodes.map(({ id, label }) => ({ id, label })),
+      edges: graph.edges.map(({ from, to }) => ({ from, to })),
+    }),
+    apiKey,
+    provider,
+    model: ollamaModel,
+    signal,
+  });
+
+  const roles = validateRoles(
+    response.roles,
+    graph.nodes.map((node) => node.id),
+  );
   onStep?.('rendering');
-  let parsed: { mermaidCode: string; roles?: Record<string, string>; animationSteps?: string[][]; aiAnimations?: { cssKeyframes: string; nodeClasses: Record<string, string> } };
-  try {
-    const cleanJson = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim();
-    parsed = JSON.parse(cleanJson);
-  } catch {
-    parsed = { mermaidCode: raw, animationSteps: [], aiAnimations: { cssKeyframes: '', nodeClasses: {} } };
-  }
 
-  const mermaidFinal = (parsed.mermaidCode || '').trim();
-  const graph = parseMermaid(mermaidFinal);
-  if (parsed.animationSteps) graph.animationSteps = parsed.animationSteps;
-  graph.aiAnimations = sanitizeAiAnimations(parsed.aiAnimations);
-  graph.mermaidSource = mermaidFinal;
-
-  const roles = parsed.roles && typeof parsed.roles === 'object' ? parsed.roles : undefined;
-  const msg = `Presentation view ready — ${graph.nodes.length} nodes${roles ? ' (role-based layout)' : ''}.`;
-  return { message: msg, graph, mermaidSource: mermaidFinal, isOffTopic: false, roles };
+  return {
+    graph,
+    roles,
+    mermaidSource: currentMermaid,
+    isOffTopic: false,
+    message: 'Presentation ready. All original nodes, labels and connections preserved.',
+  };
 }

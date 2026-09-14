@@ -1,14 +1,19 @@
 {
   "name": "pulsegraph",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "node --experimental-strip-types --test tests/parser.test.ts tests/layout.test.ts",
-    "preview": "vite preview"
+    "test": "tsx --test tests/parser.test.ts tests/layout.test.ts tests/llm.test.ts tests/regressions.test.ts",
+    "preview": "vite preview",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:e2e": "playwright test",
+    "verify": "npm run format:check && npm run lint && npm run build && npm run typecheck:tests && npm test",
+    "typecheck:tests": "tsc -p tsconfig.tests.json"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
@@ -19,6 +24,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -27,8 +33,14 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.5.0",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.13",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.2",
-    "vite": "^8.0.10"
+    "vite": "^8.3.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=24 <25"
   }
 }

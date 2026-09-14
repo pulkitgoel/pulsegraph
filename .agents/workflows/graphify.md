@@ -1,10 +1,10 @@
 ---
-name: graphify
-description: Turn any folder of files into a navigable knowledge graph
+name: Update architecture graph
+description: Refresh and query the local PulseGraph code knowledge graph.
 ---
 
-# Workflow: graphify
+# Update architecture graph
 
-Follow the graphify skill installed at ~/.agents/skills/graphify/SKILL.md to run the full pipeline.
-
-If no path argument is given, use `.` (current directory).
+Run `graphify update .` from the repository root. Confirm that
+`graphify-out/graph.json`, `graph.html`, and `GRAPH_REPORT.md` were updated, then
+run a focused `graphify query` to validate the result.
