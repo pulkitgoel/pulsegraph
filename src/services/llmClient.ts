@@ -3,6 +3,8 @@ import { readCompletion } from './llmValidation';
 
 const PROVIDERS = {
   deepseek: {
+    // Thinking mode is disabled below, so a normal call returns in a few
+    // seconds. A long deadline only makes a genuine failure feel like a hang.
     url: 'https://api.deepseek.com/v1/chat/completions',
     timeoutMs: 60_000,
   },
@@ -46,7 +48,7 @@ function buildHeaders(request: LlmRequest): Record<string, string> {
   return headers;
 }
 
-function httpError(status: number): Error {
+function httpError(status: number, detail?: string): Error {
   if (status === 401) {
     return new Error('The provider rejected the API key. Update AI settings.');
   }
@@ -55,7 +57,34 @@ function httpError(status: number): Error {
     return new Error('The provider is rate limiting requests. Wait and retry.');
   }
 
-  return new Error('The AI provider returned HTTP ' + status + '. Please retry.');
+  // Surface the provider's own message. A rejected model name or request field
+  // is otherwise indistinguishable from any other failure.
+  const suffix = detail ? ' — ' + detail.slice(0, 300) : '';
+  return new Error('The AI provider returned HTTP ' + status + suffix, {
+    cause: detail,
+  });
+}
+
+/** Read a failed response's body without letting that read mask the HTTP error. */
+async function errorDetail(response: Response): Promise<string | undefined> {
+  try {
+    const text = (await response.text()).trim();
+    if (!text) return undefined;
+
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (parsed && typeof parsed === 'object') {
+        const error = (parsed as { error?: { message?: unknown } }).error;
+        if (error && typeof error.message === 'string') return error.message;
+      }
+    } catch {
+      // Not JSON; fall through to the raw text.
+    }
+
+    return text;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Bound the response while reading, before allocating the entire payload. */
@@ -125,7 +154,10 @@ export async function requestCompletion(
       signal,
       headers,
       body: JSON.stringify({
-        model: request.provider === 'deepseek' ? 'deepseek-chat' : request.model,
+        model: request.provider === 'deepseek' ? 'deepseek-flash' : request.model,
+        // Keep interactive diagram requests in non-thinking mode. DeepSeek
+        // enables thinking by default, which can exceed the request deadline.
+        ...(request.provider === 'deepseek' ? { thinking: { type: 'disabled' } } : {}),
         messages: [
           { role: 'system', content: request.systemPrompt },
           ...history,
@@ -139,8 +171,7 @@ export async function requestCompletion(
     });
 
     if (!response.ok) {
-      await response.body?.cancel();
-      throw httpError(response.status);
+      throw httpError(response.status, await errorDetail(response));
     }
 
     return readCompletion(await readResponse(response));

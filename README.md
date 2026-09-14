@@ -46,6 +46,7 @@ fresh. In chat, Ctrl/⌘ + Enter sends; Enter inserts a new line.
 **DeepSeek:** Open **AI settings** on the landing page (or **Tools → AI settings**
 in the workspace), choose DeepSeek, and enter your
 [API key](https://platform.deepseek.com/api_keys). Requests go directly to DeepSeek.
+The integration uses `deepseek-flash` with thinking disabled for interactive diagram requests.
 The key stays in memory until reload; it is never written to localStorage,
 the project, or exported documents.
 

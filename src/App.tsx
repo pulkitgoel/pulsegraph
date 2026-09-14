@@ -65,6 +65,8 @@ export default function App() {
     () => readPreference('pulsegraph_ollama_model') || 'gemma3:4b',
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [resumePresentation, setResumePresentation] = useState(false);
+  const [isPresenting, setIsPresenting] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
@@ -192,29 +194,31 @@ export default function App() {
     }
   }
 
-  async function present() {
+  async function present(credentials = { apiKey, provider, model }) {
     if (!diagram || operation.current) return;
     if (diagram.roles) {
       setViewMode('rich');
       setPresentationMode(true);
       return;
     }
-    if (provider === 'deepseek' && !apiKey) {
+    if (credentials.provider === 'deepseek' && !credentials.apiKey) {
+      setResumePresentation(true);
       setSettingsOpen(true);
       return;
     }
 
     const controller = new AbortController();
     operation.current = controller;
+    setIsPresenting(true);
     setLoadingStep('generating');
     setError('');
 
     try {
       const result = await designPresentation(
         diagram.source,
-        apiKey,
-        provider,
-        model,
+        credentials.apiKey,
+        credentials.provider,
+        credentials.model,
         setLoadingStep,
         controller.signal,
       );
@@ -227,6 +231,7 @@ export default function App() {
       setError(failure instanceof Error ? failure.message : 'Presentation failed.');
     } finally {
       operation.current = null;
+      setIsPresenting(false);
       setLoadingStep(null);
     }
   }
@@ -388,10 +393,12 @@ export default function App() {
                     isPresentation ? 'active presentation-tab' : 'presentation-tab'
                   }
                   aria-pressed={isPresentation}
+                  aria-label="Presentation"
+                  aria-busy={isPresenting}
                   onClick={() => void present()}
                   title="Create or reopen a presentation layout"
                 >
-                  Presentation
+                  {isPresenting ? 'Designing…' : 'Presentation'}
                 </button>
               </div>
               <div className="history-controls" aria-label="History">
@@ -656,7 +663,11 @@ export default function App() {
       )}
       {busy && (
         <div className="operation-status" role="status">
-          {exporting ? 'Exporting… ' + exportProgress + '%' : 'Working…'}
+          {exporting
+            ? 'Exporting… ' + exportProgress + '%'
+            : isPresenting
+              ? 'Designing presentation… Waiting for AI.'
+              : 'Working…'}
           <button className="btn-icon" onClick={() => operation.current?.abort()}>
             Cancel
           </button>
@@ -679,7 +690,10 @@ export default function App() {
           provider={provider}
           model={model}
           hasApiKey={Boolean(apiKey)}
-          onClose={() => setSettingsOpen(false)}
+          onClose={() => {
+            setSettingsOpen(false);
+            setResumePresentation(false);
+          }}
           onSave={(key, nextProvider, nextModel) => {
             if (key) {
               writeSessionApiKey(key);
@@ -690,8 +704,17 @@ export default function App() {
             writePreference('pulsegraph_llm_provider', nextProvider);
             writePreference('pulsegraph_ollama_model', nextModel);
             setSettingsOpen(false);
+            if (resumePresentation) {
+              setResumePresentation(false);
+              void present({
+                apiKey: key || apiKey,
+                provider: nextProvider,
+                model: nextModel,
+              });
+            }
           }}
           onReset={() => {
+            setResumePresentation(false);
             clearSessionApiKey();
             setApiKey('');
             setProvider('deepseek');

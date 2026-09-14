@@ -267,7 +267,6 @@ test('AI presentation preserves topology, enables slide export, and does not per
   page,
 }) => {
   await example(page);
-  await configureAi(page);
   let presentationRequests = 0;
   await page.route('https://api.deepseek.com/**', (route) => {
     presentationRequests += 1;
@@ -295,6 +294,12 @@ test('AI presentation preserves topology, enables slide export, and does not per
     });
   });
   await page.getByRole('button', { name: 'Presentation', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.keyboard.press('Escape');
+  expect(presentationRequests).toBe(0);
+  await page.getByRole('button', { name: 'Presentation', exact: true }).click();
+  await page.getByLabel('DeepSeek API key').fill('test-key-not-real');
+  await page.getByRole('button', { name: 'Save AI settings' }).click();
   await expect(page.getByRole('log')).toContainText('All original nodes');
   const presentationPosition = await page
     .locator('#node-group-API')

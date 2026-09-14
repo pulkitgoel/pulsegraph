@@ -13,6 +13,28 @@ function completion(content: unknown, finishReason = 'stop'): Response {
   });
 }
 
+test('DeepSeek uses the current non-thinking model without changing Ollama options', async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const fetchMock = mock.method(
+    globalThis,
+    'fetch',
+    async (_input: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return completion({ roles: { A: 'lead-in', B: 'pipeline' } });
+    },
+  );
+  try {
+    await designPresentation(SOURCE, 'test-key', 'deepseek');
+    await designPresentation(SOURCE, '', 'ollama', 'gemma3:4b');
+    assert.equal(bodies[0]?.model, 'deepseek-flash');
+    assert.deepEqual(bodies[0]?.thinking, { type: 'disabled' });
+    assert.equal(bodies[1]?.model, 'gemma3:4b');
+    assert.equal(bodies[1]?.thinking, undefined);
+  } finally {
+    fetchMock.mock.restore();
+  }
+});
+
 test('clean Mermaid never contacts a provider', async () => {
   const fetchMock = mock.method(globalThis, 'fetch', async () => {
     throw new Error('Unexpected network request');
