@@ -4,6 +4,8 @@ import { ChatPanel } from './components/ChatPanel';
 import { DiagramCanvas } from './components/DiagramCanvas';
 import { RichDiagramCanvas } from './components/RichDiagramCanvas';
 import { SourceEditor } from './components/SourceEditor';
+import { LandingPage } from './components/LandingPage';
+import { ToolIcon } from './components/ToolIcon';
 import { sendMessage, designPresentation } from './services/llmService';
 import type { ExportFrame } from './services/gifExporter';
 import { buildBlueprintSvg } from './render/blueprintSvg';
@@ -329,7 +331,20 @@ export default function App() {
     <div className={'app-layout ' + (active ? 'active' : 'idle')}>
       <header className="app-header">
         <div className="app-logo">
-          <span aria-hidden="true">⚡</span>PulseGraph
+          <svg className="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="9" fill="currentColor" />
+            <path
+              d="M6 17h6l3-8 4 15 3-7h4"
+              fill="none"
+              stroke="var(--surface)"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span className="brand-name">
+            PulseGraph<span className="brand-dot">.</span>
+          </span>
         </div>
         <nav className="app-header-right" aria-label="Diagram tools">
           <input
@@ -468,6 +483,9 @@ export default function App() {
           )}
           {!active ? (
             <div className="landing-actions">
+              <a className="header-examples" href="#examples">
+                Examples
+              </a>
               <button
                 className="btn-icon"
                 disabled={busy}
@@ -499,11 +517,12 @@ export default function App() {
                 aria-expanded={toolsOpen}
                 onClick={() => setToolsOpen((open) => !open)}
               >
-                Workspace <span aria-hidden="true">⌄</span>
+                Tools <span aria-hidden="true">⌄</span>
               </button>
               {toolsOpen && (
                 <div className="tools-menu">
                   <span className="tools-menu-heading">Workspace tools</span>
+                  <p className="tools-menu-description">Make this workspace yours.</p>
                   <button
                     onClick={() => {
                       setToolsOpen(false);
@@ -511,7 +530,7 @@ export default function App() {
                     }}
                     disabled={busy}
                   >
-                    AI settings
+                    <ToolIcon name="settings" /> AI settings
                   </button>
                   <button
                     onClick={() => {
@@ -520,6 +539,7 @@ export default function App() {
                     }}
                     disabled={busy}
                   >
+                    <ToolIcon name="theme" />
                     {theme === 'dark' ? 'Use light theme' : 'Use dark theme'}
                   </button>
                   <button
@@ -529,7 +549,7 @@ export default function App() {
                     }}
                     disabled={busy}
                   >
-                    Import diagram
+                    <ToolIcon name="import" /> Import diagram
                   </button>
                   {diagram && (
                     <>
@@ -541,6 +561,7 @@ export default function App() {
                           setReducedMotion(!reducedMotion);
                         }}
                       >
+                        <ToolIcon name="animation" />
                         {reducedMotion ? 'Play animation' : 'Pause animation'}
                       </button>
                       <button
@@ -550,14 +571,14 @@ export default function App() {
                         }}
                         aria-expanded={showSource}
                       >
-                        Edit Mermaid source
+                        <ToolIcon name="source" /> Edit Mermaid source
                       </button>
                       <button
                         className="tools-reset"
                         disabled={busy}
                         onClick={resetWorkspace}
                       >
-                        Reset workspace
+                        <ToolIcon name="reset" /> Reset workspace
                       </button>
                     </>
                   )}
@@ -609,61 +630,29 @@ export default function App() {
           )}
         </main>
         {!active && (
-          <main className="idle-hero">
-            <h1 className="idle-title">
-              Describe a flow.
-              <br />
-              <span>Watch it come alive.</span>
-            </h1>
-            <p className="idle-subtitle">
-              Paste Mermaid for instant diagrams, or connect AI to turn an idea into a
-              flow.
-            </p>
-            <div className="idle-input-wrap">
-              <textarea
-                id="idle-chat-input"
-                aria-label="Diagram description or Mermaid source"
-                className="idle-input"
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                rows={4}
-                maxLength={30_000}
-                placeholder="flowchart LR; A[Your idea] --> B[Something useful]"
-                disabled={busy}
-              />
-              <button
-                className="btn-primary idle-send"
-                disabled={busy || !input.trim()}
-                onClick={() => void submit(input)}
-              >
-                Generate diagram →
-              </button>
-            </div>
-            <div className="example-pills">
-              {EXAMPLES.map((example) => (
-                <button
-                  className="example-pill"
-                  key={example.name}
-                  disabled={busy}
-                  onClick={() => applySource(example.source)}
-                >
-                  {example.name}
-                </button>
-              ))}
-            </div>
-            <p className="modal-note">
-              No account needed · Local Mermaid editor · PNG, GIF, SVG and editable
-              exports
-            </p>
-          </main>
+          <LandingPage
+            input={input}
+            busy={busy}
+            examples={EXAMPLES}
+            onInputChange={setInput}
+            onSubmit={() => void submit(input)}
+            onExample={applySource}
+            onSettings={() => setSettingsOpen(true)}
+          />
         )}
       </div>
       {diagram && (
-        <div className="document-status" role="status">
-          {workspace.saved
-            ? 'Draft saved in this browser'
-            : 'Browser storage unavailable — export your document to keep it'}
-        </div>
+        <footer className="document-status">
+          <span role="status">
+            <span className="status-dot" />
+            {workspace.saved
+              ? 'Draft saved in this browser'
+              : 'Browser storage unavailable — export your document to keep it'}
+          </span>
+          <span className="workspace-summary">
+            {diagram.graph.nodes.length} nodes · {diagram.graph.edges.length} connections
+          </span>
+        </footer>
       )}
       {busy && (
         <div className="operation-status" role="status">

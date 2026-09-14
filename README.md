@@ -12,6 +12,7 @@ Connect DeepSeek or local Ollama when you want to describe changes in plain Engl
 
 ## Features
 
+- Responsive landing page with an animated flow preview, working examples, and light/dark themes.
 - Classic and Rich SVG diagrams with animated flow markers and icons.
 - Direct Mermaid editing, mouse/touch pan, keyboard zoom, and Play/Pause.
 - Local draft recovery, 20-step undo/redo, source import, editable JSON import/export.
@@ -36,13 +37,13 @@ Open the URL printed by Vite and click **Request flow**, or paste:
       S --> DB[(PostgreSQL)]
       S -.-> CACHE[/Redis/]
 
-Use **Workspace → Edit Mermaid source** to change the diagram. Invalid input preserves
-your current diagram. **Workspace → Reset workspace** clears the saved draft and starts
+Use **Tools → Edit Mermaid source** to change the diagram. Invalid input preserves
+your current diagram. **Tools → Reset workspace** clears the saved draft and starts
 fresh. In chat, Ctrl/⌘ + Enter sends; Enter inserts a new line.
 
 ## Optional AI
 
-**DeepSeek:** Open **AI settings** on the landing page (or **Workspace → AI settings**
+**DeepSeek:** Open **AI settings** on the landing page (or **Tools → AI settings**
 in the workspace), choose DeepSeek, and enter your
 [API key](https://platform.deepseek.com/api_keys). Requests go directly to DeepSeek.
 The key stays in memory until reload; it is never written to localStorage,

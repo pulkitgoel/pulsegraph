@@ -45,6 +45,63 @@ async function configureAi(page: Page) {
   await page.getByRole('button', { name: 'Save AI settings' }).click();
 }
 
+test('landing preview, examples, footer and workspace menu work at narrow widths', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Pause preview' }).click();
+  await expect(page.getByRole('button', { name: 'Play preview' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  expect(
+    await page
+      .locator('.preview-beams path')
+      .first()
+      .evaluate((path) => getComputedStyle(path).animationPlayState),
+  ).toBe('paused');
+  await page.getByRole('button', { name: 'Play preview' }).click();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  expect(
+    await page
+      .locator('.preview-beams path')
+      .first()
+      .evaluate((path) => getComputedStyle(path).animationName),
+  ).toBe('none');
+  for (const width of [320, 390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    const landing = page.locator('.landing-page');
+    expect(
+      await landing.evaluate((element) => element.scrollWidth - element.clientWidth),
+    ).toBeLessThanOrEqual(1);
+    await page
+      .getByRole('navigation', { name: 'Footer', exact: true })
+      .scrollIntoViewIfNeeded();
+    await page.getByRole('button', { name: 'Connect AI', exact: true }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.screenshot({ path: `test-results/landing-footer-${width}.png` });
+    await page.getByRole('link', { name: 'Explore examples', exact: true }).click();
+    await expect(
+      page.getByRole('button', { name: 'Decision loop', exact: true }),
+    ).toBeInViewport();
+  }
+  for (const name of ['Request flow', 'Decision loop', 'Delivery pipeline']) {
+    await page.getByRole('button', { name, exact: true }).click();
+    await expect(page.locator('#pulsegraph-svg')).toBeVisible();
+    await expect(page.locator('.workspace-summary')).toContainText('connections');
+    await openMore(page);
+    await expect(
+      page.getByRole('button', { name: 'Reset workspace', exact: true }),
+    ).toBeVisible();
+    await page.screenshot({ path: `test-results/menu-${name.replaceAll(' ', '-')}.png` });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.tools-menu')).toHaveCount(0);
+    await openMore(page);
+    await page.getByRole('button', { name: 'Reset workspace', exact: true }).click();
+  }
+});
+
 test('long business presentation uses semantic zones and wrapped rows instead of Rich geometry', async ({
   page,
 }) => {
@@ -155,9 +212,9 @@ test('local rendering, editing, undo, recovery, keyboard navigation and no exter
   expect(external).toEqual([]);
   await openMore(page);
   await page.getByRole('button', { name: 'Reset workspace', exact: true }).click();
-  await expect(page.getByRole('heading', { name: /Describe a flow/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Every flow/ })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading', { name: /Describe a flow/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Every flow/ })).toBeVisible();
 });
 
 test('invalid source preserves the current document', async ({ page }) => {
