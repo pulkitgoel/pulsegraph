@@ -1,4 +1,5 @@
 import { scopedAnimations } from '../lib/animations';
+import { pulseTravelWindow } from '../lib/pulseTravel';
 import { pointsToPath, pointsToRoundedPath } from '../lib/svgPath';
 import { useCanvasViewport } from '../lib/useCanvasViewport';
 import { useEffect, useRef, useMemo } from 'react';
@@ -1376,14 +1377,15 @@ export function RichDiagramCanvas({
         const duration = 1.5 + (i % 5) * 0.28;
         if (variant === 'flow') {
           const length = pathEl.getTotalLength();
+          const pulseWindow = pulseTravelWindow(length);
           gsap.set(pulseEl, {
             opacity: 0,
             strokeDasharray: `18 ${Math.max(18, length - 18)}`,
-            strokeDashoffset: 0,
+            strokeDashoffset: -pulseWindow.inset,
           });
           gsap.to(pulseEl, { opacity: 1, duration: 0.25, delay: edgeDelay + 0.5 });
           gsap.to(pulseEl, {
-            strokeDashoffset: -length,
+            strokeDashoffset: -(length - pulseWindow.inset),
             duration,
             repeat: -1,
             ease: 'none',
@@ -1391,6 +1393,7 @@ export function RichDiagramCanvas({
           });
           return;
         }
+        const pulseWindow = pulseTravelWindow(pathEl.getTotalLength());
         gsap.set(pulseEl, { opacity: 0 });
         gsap.to(pulseEl, { opacity: 1, duration: 0.3, delay: edgeDelay + 0.5 });
         gsap.to(pulseEl, {
@@ -1402,6 +1405,8 @@ export function RichDiagramCanvas({
             path: pathEl as SVGPathElement,
             align: pathEl as SVGPathElement,
             alignOrigin: [0.5, 0.5],
+            start: pulseWindow.start,
+            end: pulseWindow.end,
           },
           onRepeat: () => {
             context.add(() => {

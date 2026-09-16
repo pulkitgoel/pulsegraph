@@ -1,4 +1,5 @@
 import { exportGeometry, type ExportFrame } from './exportGeometry';
+import { pulseTravelWindow } from '../lib/pulseTravel';
 export type { ExportFrame } from './exportGeometry';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -15,9 +16,10 @@ function safePathLength(path: SVGPathElement | null): number {
 
 function flowSegmentMetrics(length: number) {
   const segment = Math.min(42, Math.max(18, length * 0.14));
+  const pulseWindow = pulseTravelWindow(length);
   return {
     dasharray: `${segment} ${Math.max(1, length - segment)}`,
-    dashoffset: String(-length * 0.35),
+    dashoffset: String(-(length * 0.35 + pulseWindow.inset * 0.15)),
   };
 }
 
@@ -216,9 +218,16 @@ export async function exportGif(
       );
       if (!segment) throw new Error('Flow animation is unavailable for this edge.');
       const metrics = flowSegmentMetrics(length);
+      const pulseWindow = pulseTravelWindow(length);
       segment.setAttribute('stroke-dasharray', metrics.dasharray);
       segment.setAttribute('opacity', '1');
-      return { kind: 'segment' as const, segment, length };
+      return {
+        kind: 'segment' as const,
+        segment,
+        length,
+        startOffset: -(length * pulseWindow.start),
+        endOffset: -(length * pulseWindow.end),
+      };
     }
     const circle = document.createElementNS(SVG_NS, 'circle');
     circle.setAttribute('r', '5');
@@ -240,7 +249,10 @@ export async function exportGif(
         if (flow.kind === 'segment') {
           flow.segment.setAttribute(
             'stroke-dashoffset',
-            String(-(flow.length * index) / frameCount),
+            String(
+              flow.startOffset +
+                ((flow.endOffset - flow.startOffset) * index) / frameCount,
+            ),
           );
           return;
         }

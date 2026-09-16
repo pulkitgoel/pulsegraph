@@ -1,4 +1,5 @@
 import { scopedAnimations } from '../lib/animations';
+import { pulseTravelWindow } from '../lib/pulseTravel';
 import { pointsToPath } from '../lib/svgPath';
 import { useCanvasViewport } from '../lib/useCanvasViewport';
 import { useEffect, useRef, useMemo } from 'react';
@@ -341,6 +342,7 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
         const duration = 1.5 + (i % 5) * 0.28;
         gsap.set(pulseEl, { opacity: 0 });
         gsap.to(pulseEl, { opacity: 1, duration: 0.3, delay: edgeDelay + 0.5 });
+        const pulseWindow = pulseTravelWindow(pathEl.getTotalLength());
         gsap.to(pulseEl, {
           duration: duration,
           repeat: -1,
@@ -350,6 +352,8 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
             path: pathEl as SVGPathElement,
             align: pathEl as SVGPathElement,
             alignOrigin: [0.5, 0.5],
+            start: pulseWindow.start,
+            end: pulseWindow.end,
           },
           onRepeat: () => {
             context.add(() => {

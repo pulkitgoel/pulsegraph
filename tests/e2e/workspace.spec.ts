@@ -272,6 +272,44 @@ test('presentation decision loops do not overlap semantic zone borders', async (
   await writeFile('test-results/presentation-decision-loop.gif', gif);
 });
 
+test('rich and classic pulse markers stay out of node boxes', async ({ page }) => {
+  await page.goto('/');
+  const source = `flowchart LR
+    G[GitHub] --> T[Tests]
+    T --> P{Pass?}
+    P -->|No| F[Fix code]
+    F --> G
+    P -->|Yes| B[Build container]
+    B --> D[Deploy]`;
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'ci-loop.mmd',
+    mimeType: 'text/plain',
+    buffer: Buffer.from(source),
+  });
+
+  for (const mode of ['Rich', 'Classic']) {
+    await page.getByRole('button', { name: mode, exact: true }).click();
+    await page.waitForTimeout(900);
+    const overlapping = await page.locator('#pulsegraph-svg').evaluate((svg) => {
+      const boxes = Array.from(svg.querySelectorAll('[id^="node-group-"]')).map((node) =>
+        node.getBoundingClientRect(),
+      );
+      return Array.from(svg.querySelectorAll('[id^="pulse-"]')).some((pulse) => {
+        if (getComputedStyle(pulse).opacity === '0') return false;
+        const marker = pulse.getBoundingClientRect();
+        return boxes.some(
+          (box) =>
+            marker.left < box.right &&
+            marker.right > box.left &&
+            marker.top < box.bottom &&
+            marker.bottom > box.top,
+        );
+      });
+    });
+    expect(overlapping, `${mode} pulse marker overlaps a node`).toBe(false);
+  }
+});
+
 test('Flow appearance uses rounded connectors, flowing segments and varied icons', async ({
   page,
 }) => {
