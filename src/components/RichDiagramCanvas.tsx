@@ -1144,6 +1144,13 @@ export function RichDiagramCanvas({
 
   useEffect(() => {
     ctxRef.current?.revert();
+    // Restore marker attributes before a new animation pass. The original
+    // value is cached because a previous pass may have temporarily set it to
+    // `none` while the connector was drawing.
+    svgRef.current?.querySelectorAll<SVGPathElement>('[id^="path-"]').forEach((path) => {
+      const original = path.getAttribute('data-marker-end');
+      if (original) path.setAttribute('marker-end', original);
+    });
     if (reducedMotion) return;
     ctxRef.current = gsap.context((context) => {
       const animate = scopedAnimations(svgRef.current);
@@ -1329,10 +1336,25 @@ export function RichDiagramCanvas({
         ) as SVGPathElement | null;
         const pulseEl = svgRef.current?.getElementById(`pulse-${edge.id}`);
         if (!pathEl || !pulseEl) return;
+        // SVG paints marker-end even when the path is hidden by a dash offset.
+        // Hold the arrowhead until the connector has actually been revealed;
+        // otherwise branches show detached triangles beside still-hidden nodes.
+        const markerEnd =
+          pathEl.getAttribute('data-marker-end') ?? pathEl.getAttribute('marker-end');
+        if (markerEnd && markerEnd !== 'none') {
+          pathEl.setAttribute('data-marker-end', markerEnd);
+          pathEl.setAttribute('marker-end', 'none');
+        }
 
         const srcLevel = nodeLevels.get(edge.from) || 0;
+        const targetLevel = nodeLevels.get(edge.to) || 0;
+        // Wait for both endpoints to finish their reveal before drawing or
+        // animating the connector. This keeps branch and loop markers clear
+        // of node borders while the diagram is entering.
         const edgeDelay =
-          variant === 'flow' ? srcLevel * 0.12 + 0.15 : srcLevel * 0.6 + 0.4;
+          variant === 'flow'
+            ? Math.max(srcLevel, targetLevel) * 0.12 + 0.5
+            : Math.max(srcLevel, targetLevel) * 0.6 + 0.8;
 
         if (!edge.isBackEdge) {
           const length = pathEl.getTotalLength();
@@ -1343,6 +1365,8 @@ export function RichDiagramCanvas({
             delay: edgeDelay,
             ease: 'power2.out',
             onComplete: () => {
+              if (markerEnd && markerEnd !== 'none')
+                pathEl.setAttribute('marker-end', markerEnd);
               context.add(() => {
                 gsap.set(pathEl, { strokeDasharray: edge.dashed ? '6 6' : 'none' });
                 gsap.to(pathEl, {
@@ -1362,6 +1386,8 @@ export function RichDiagramCanvas({
             delay: edgeDelay,
             ease: 'power2.out',
             onComplete: () => {
+              if (markerEnd && markerEnd !== 'none')
+                pathEl.setAttribute('marker-end', markerEnd);
               context.add(() => {
                 gsap.to(pathEl, {
                   strokeDashoffset: -9,

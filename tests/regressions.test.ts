@@ -19,9 +19,9 @@ test('flow paths round routed vertices without moving their endpoints', () => {
 
 test('animated edge markers stay inside the connector corridor', () => {
   const window = pulseTravelWindow(200);
-  assert.equal(window.start, 0.08);
-  assert.equal(window.end, 0.92);
-  assert.equal(window.inset, 16);
+  assert.equal(window.start, 0.12);
+  assert.equal(window.end, 0.88);
+  assert.equal(window.inset, 24);
 });
 
 test('operators and semicolons inside quoted node labels remain text', () => {

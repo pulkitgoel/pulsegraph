@@ -1,6 +1,9 @@
 /** Keep animated edge markers inside the connector corridor, away from node borders. */
 export function pulseTravelWindow(length: number) {
   if (!Number.isFinite(length) || length <= 0) return { start: 0, end: 1, inset: 0 };
-  const inset = Math.min(length * 0.25, Math.max(3, Math.min(24, length * 0.08)));
+  // Leave room for the marker radius and its glow. A small connector still
+  // gets a usable travel corridor, while long routed edges keep a generous
+  // visual gap from both endpoint boxes.
+  const inset = Math.min(length * 0.4, Math.max(14, Math.min(32, length * 0.12)));
   return { start: inset / length, end: 1 - inset / length, inset };
 }

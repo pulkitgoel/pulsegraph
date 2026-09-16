@@ -289,7 +289,7 @@ test('rich and classic pulse markers stay out of node boxes', async ({ page }) =
 
   for (const mode of ['Rich', 'Classic']) {
     await page.getByRole('button', { name: mode, exact: true }).click();
-    await page.waitForTimeout(900);
+    await page.waitForTimeout(3600);
     const overlapping = await page.locator('#pulsegraph-svg').evaluate((svg) => {
       const boxes = Array.from(svg.querySelectorAll('[id^="node-group-"]')).map((node) =>
         node.getBoundingClientRect(),
