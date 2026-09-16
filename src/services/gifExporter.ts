@@ -4,13 +4,33 @@ export type { ExportFrame } from './exportGeometry';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 type Progress = (percent: number) => void;
 
+function safePathLength(path: SVGPathElement | null): number {
+  if (!path) return 0;
+  try {
+    return path.getTotalLength();
+  } catch {
+    return 0;
+  }
+}
+
+function flowSegmentMetrics(length: number) {
+  const segment = Math.min(42, Math.max(18, length * 0.14));
+  return {
+    dasharray: `${segment} ${Math.max(1, length - segment)}`,
+    dashoffset: String(-length * 0.35),
+  };
+}
+
 /** Export a settled snapshot. Never mutate the live canvas or GSAP timeline. */
 function snapshot(element: Element): SVGSVGElement {
+  const flowStyle = element.getAttribute('data-visual-style') === 'flow';
   const clone = element.cloneNode(true) as SVGSVGElement;
   clone.removeAttribute('style');
   clone
-    .querySelectorAll('style, script, foreignObject, [id^="pulse-"], [id^="glow-"]')
+    .querySelectorAll('style, script, foreignObject, [id^="glow-"]')
     .forEach((node) => node.remove());
+  if (!flowStyle)
+    clone.querySelectorAll('[id^="pulse-"]').forEach((node) => node.remove());
   clone.querySelectorAll<SVGElement>('.node-group, [id^="group-"]').forEach((node) => {
     node.style.removeProperty('transform');
     node.style.opacity = '1';
@@ -22,6 +42,20 @@ function snapshot(element: Element): SVGSVGElement {
     path.style.strokeDashoffset = '0';
     path.style.opacity = '1';
   });
+  if (flowStyle) {
+    clone.querySelectorAll<SVGPathElement>('.flow-segment').forEach((segment) => {
+      const sourcePath = element.querySelector<SVGPathElement>(
+        `#path-${segment.id.slice('pulse-'.length)}`,
+      );
+      const metrics = flowSegmentMetrics(safePathLength(sourcePath));
+      segment.style.removeProperty('stroke-dasharray');
+      segment.style.removeProperty('stroke-dashoffset');
+      segment.style.removeProperty('opacity');
+      segment.setAttribute('stroke-dasharray', metrics.dasharray);
+      segment.setAttribute('stroke-dashoffset', metrics.dashoffset);
+      segment.setAttribute('opacity', '1');
+    });
+  }
   return clone;
 }
 
@@ -170,14 +204,27 @@ export async function exportGif(
   signal?: AbortSignal,
 ): Promise<Blob> {
   const clone = snapshot(element);
+  const flowStyle = clone.getAttribute('data-visual-style') === 'flow';
   clone.querySelectorAll('[filter]').forEach((node) => node.removeAttribute('filter'));
   const paths = Array.from(clone.querySelectorAll<SVGPathElement>('[id^="path-"]'));
   const flows = paths.map((path) => {
+    const sourcePath = element.querySelector<SVGPathElement>(`#${path.id}`);
+    const length = safePathLength(sourcePath) || safePathLength(path);
+    if (flowStyle) {
+      const segment = clone.querySelector<SVGPathElement>(
+        `#pulse-${path.id.slice('path-'.length)}`,
+      );
+      if (!segment) throw new Error('Flow animation is unavailable for this edge.');
+      const metrics = flowSegmentMetrics(length);
+      segment.setAttribute('stroke-dasharray', metrics.dasharray);
+      segment.setAttribute('opacity', '1');
+      return { kind: 'segment' as const, segment, length };
+    }
     const circle = document.createElementNS(SVG_NS, 'circle');
     circle.setAttribute('r', '5');
     circle.setAttribute('fill', theme === 'light' ? '#6D3BFF' : '#67E8F9');
     path.parentNode?.appendChild(circle);
-    return { path, circle };
+    return { kind: 'marker' as const, path, circle, length };
   });
   // Full-resolution GIFs remain crisp in presentations and social posts. Frames
   // are transferred to the worker one at a time, limiting main-thread memory.
@@ -189,10 +236,17 @@ export async function exportGif(
   try {
     for (let index = 0; index < frameCount; index++) {
       signal?.throwIfAborted();
-      flows.forEach(({ path, circle }) => {
-        const point = path.getPointAtLength((path.getTotalLength() * index) / frameCount);
-        circle.setAttribute('cx', String(point.x));
-        circle.setAttribute('cy', String(point.y));
+      flows.forEach((flow) => {
+        if (flow.kind === 'segment') {
+          flow.segment.setAttribute(
+            'stroke-dashoffset',
+            String(-(flow.length * index) / frameCount),
+          );
+          return;
+        }
+        const point = flow.path.getPointAtLength((flow.length * index) / frameCount);
+        flow.circle.setAttribute('cx', String(point.x));
+        flow.circle.setAttribute('cy', String(point.y));
       });
       const canvas = await rasterize(
         root,

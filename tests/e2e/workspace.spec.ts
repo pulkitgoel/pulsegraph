@@ -218,6 +218,20 @@ test('Flow appearance uses rounded connectors, flowing segments and varied icons
     )
     .toBe(1);
   await page.screenshot({ path: 'test-results/flow-appearance.png' });
+
+  const flowSvg = (await exportFile(page, 'SVG')).toString();
+  expect(flowSvg).toContain('data-visual-style="flow"');
+  expect(flowSvg).toContain('class="flow-segment"');
+  expect(flowSvg).toContain('stroke-dasharray=');
+  expect(flowSvg).toContain('stroke-dashoffset=');
+  const flowPng = await exportFile(page, 'PNG');
+  expect(flowPng.subarray(1, 4).toString()).toBe('PNG');
+  await writeFile('test-results/flow-export.png', flowPng);
+  const flowGif = await exportFile(page, 'Animated GIF');
+  expect(flowGif.subarray(0, 3).toString()).toBe('GIF');
+  expect(flowGif.length).toBeGreaterThan(10_000);
+  await writeFile('test-results/flow-export.gif', flowGif);
+
   await page.getByRole('button', { name: 'Rich', exact: true }).click();
   await expect(page.locator('#pulsegraph-svg')).toHaveAttribute(
     'data-visual-style',
