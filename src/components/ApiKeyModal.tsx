@@ -92,7 +92,7 @@ export function ApiKeyModal({
               autoComplete="off"
               value={key}
               onChange={(event) => setKey(event.target.value)}
-              placeholder={hasApiKey ? 'Key configured — leave blank to keep it' : 'sk-…'}
+              placeholder={hasApiKey ? 'Key configured. Leave blank to keep it.' : 'sk-…'}
             />
             <small>
               Your key is kept in memory until this page closes. Requests go directly to

@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 
 async function example(page: Page) {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Request flow', exact: true }).click();
+  await page.getByRole('button', { name: /^Request flow/ }).click();
   await expect(page.locator('#pulsegraph-svg')).toBeVisible();
 }
 
@@ -17,24 +17,31 @@ test('landing actions stay discoverable in both themes and on mobile', async ({
   await page.goto('/');
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
+    const headerColors: string[] = [];
     for (const theme of ['light', 'dark']) {
       await page.getByRole('button', { name: `Use ${theme} theme`, exact: true }).click();
       await expect(page.getByRole('button', { name: 'Workspace tools' })).toHaveCount(0);
       await expect(
         page.getByRole('button', { name: 'Import diagram', exact: true }),
       ).toBeVisible();
-      await page.getByRole('button', { name: 'AI settings', exact: true }).click();
+      await page
+        .getByRole('navigation', { name: 'Diagram tools' })
+        .getByRole('button', { name: 'AI settings', exact: true })
+        .click();
       await expect(page.getByRole('dialog')).toBeVisible();
       await page.keyboard.press('Escape');
       const header = page.locator('.app-header');
       expect(await header.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(
         width,
       );
-      expect(
-        await header.evaluate((element) => getComputedStyle(element).backgroundColor),
-      ).toBe(theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(15, 22, 35)');
+      const headerColor = await header.evaluate(
+        (element) => getComputedStyle(element).backgroundColor,
+      );
+      expect(headerColor).not.toBe('rgba(0, 0, 0, 0)');
+      headerColors.push(headerColor);
       await page.screenshot({ path: `test-results/landing-${theme}-${width}.png` });
     }
+    expect(headerColors[0]).not.toBe(headerColors[1]);
   }
 });
 
@@ -49,8 +56,8 @@ test('landing preview, examples, footer and workspace menu work at narrow widths
   page,
 }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Pause preview' }).click();
-  await expect(page.getByRole('button', { name: 'Play preview' })).toHaveAttribute(
+  await page.getByRole('button', { name: 'Pause', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Play', exact: true })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
@@ -60,7 +67,7 @@ test('landing preview, examples, footer and workspace menu work at narrow widths
       .first()
       .evaluate((path) => getComputedStyle(path).animationPlayState),
   ).toBe('paused');
-  await page.getByRole('button', { name: 'Play preview' }).click();
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
   await page.emulateMedia({ reducedMotion: 'reduce' });
   expect(
     await page
@@ -77,17 +84,21 @@ test('landing preview, examples, footer and workspace menu work at narrow widths
     await page
       .getByRole('navigation', { name: 'Footer', exact: true })
       .scrollIntoViewIfNeeded();
-    await page.getByRole('button', { name: 'Connect AI', exact: true }).click();
+    await page
+      .getByRole('navigation', { name: 'Footer', exact: true })
+      .getByRole('button', { name: 'AI settings', exact: true })
+      .click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.keyboard.press('Escape');
     await page.screenshot({ path: `test-results/landing-footer-${width}.png` });
-    await page.getByRole('link', { name: 'Explore examples', exact: true }).click();
-    await expect(
-      page.getByRole('button', { name: 'Decision loop', exact: true }),
-    ).toBeInViewport();
+    await page
+      .getByRole('navigation', { name: 'Footer', exact: true })
+      .getByRole('link', { name: 'Examples', exact: true })
+      .click();
+    await expect(page.getByRole('button', { name: /^Decision loop/ })).toBeInViewport();
   }
   for (const name of ['Request flow', 'Decision loop', 'Delivery pipeline']) {
-    await page.getByRole('button', { name, exact: true }).click();
+    await page.getByRole('button', { name: new RegExp(`^${name}`) }).click();
     await expect(page.locator('#pulsegraph-svg')).toBeVisible();
     await expect(page.locator('.workspace-summary')).toContainText('connections');
     await openMore(page);
@@ -171,6 +182,49 @@ test('long business presentation uses semantic zones and wrapped rows instead of
   await expect(page.locator('.tools-menu')).toHaveCount(0);
 });
 
+test('Flow appearance uses rounded connectors, flowing segments and varied icons', async ({
+  page,
+}) => {
+  await example(page);
+  await page.getByRole('button', { name: 'Flow', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Flow', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(page.locator('#pulsegraph-svg')).toHaveAttribute(
+    'data-visual-style',
+    'flow',
+  );
+  await expect(page.locator('.flow-segment')).toHaveCount(5);
+  expect(
+    await page
+      .locator('[id^="path-"]')
+      .evaluateAll((paths) =>
+        paths.some((path) => path.getAttribute('d')?.includes(' Q ')),
+      ),
+  ).toBe(true);
+  expect(
+    await page.locator('#pulsegraph-svg .flow-node-icon').count(),
+  ).toBeGreaterThanOrEqual(5);
+  expect(
+    await page.locator('#pulsegraph-svg .step-badge').count(),
+  ).toBeGreaterThanOrEqual(5);
+  await expect
+    .poll(() =>
+      page
+        .locator('[id^="node-group-"]')
+        .last()
+        .evaluate((node) => Number(getComputedStyle(node).opacity)),
+    )
+    .toBe(1);
+  await page.screenshot({ path: 'test-results/flow-appearance.png' });
+  await page.getByRole('button', { name: 'Rich', exact: true }).click();
+  await expect(page.locator('#pulsegraph-svg')).toHaveAttribute(
+    'data-visual-style',
+    'rich',
+  );
+});
+
 async function exportFile(page: Page, name: string) {
   await page.getByText('Export', { exact: true }).click();
   const download = page.waitForEvent('download');
@@ -212,9 +266,9 @@ test('local rendering, editing, undo, recovery, keyboard navigation and no exter
   expect(external).toEqual([]);
   await openMore(page);
   await page.getByRole('button', { name: 'Reset workspace', exact: true }).click();
-  await expect(page.getByRole('heading', { name: /Every flow/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Mermaid in/ })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading', { name: /Every flow/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Mermaid in/ })).toBeVisible();
 });
 
 test('invalid source preserves the current document', async ({ page }) => {
@@ -343,7 +397,7 @@ test('configured AI settings can be kept or explicitly reset', async ({ page }) 
   await page.getByRole('button', { name: 'AI settings', exact: true }).click();
   await expect(page.getByLabel('DeepSeek API key')).toHaveAttribute(
     'placeholder',
-    'Key configured — leave blank to keep it',
+    'Key configured. Leave blank to keep it.',
   );
   await page.getByRole('button', { name: 'Save AI settings' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -370,7 +424,7 @@ test('PNG, SVG, GIF and document exports produce real files with requested frami
   const svg = await exportFile(page, 'SVG');
   expect(svg.toString()).toContain('<svg');
   expect(svg.toString()).not.toContain('<script');
-  const gif = await exportFile(page, 'GIF');
+  const gif = await exportFile(page, 'Animated GIF');
   expect(gif.subarray(0, 3).toString()).toBe('GIF');
   expect(gif.readUInt16LE(6)).toBe(2560);
   expect(gif.readUInt16LE(8)).toBe(1440);

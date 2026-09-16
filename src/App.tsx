@@ -41,6 +41,18 @@ const EXAMPLES = [
   },
 ];
 
+const EXPORT_IMAGE_KINDS = [
+  { kind: 'png', label: 'PNG', icon: 'image' },
+  { kind: 'gif', label: 'Animated GIF', icon: 'motion' },
+  { kind: 'svg', label: 'SVG', icon: 'vector' },
+  { kind: 'slide', label: 'Slide PNG', icon: 'slide' },
+] as const;
+
+const EXPORT_SOURCE_KINDS = [
+  { kind: 'source', label: 'Mermaid source', icon: 'source' },
+  { kind: 'document', label: 'Editable document', icon: 'document' },
+] as const;
+
 function message(role: ChatMessage['role'], content: string): ChatMessage {
   return { id: crypto.randomUUID(), role, content, timestamp: new Date() };
 }
@@ -76,12 +88,14 @@ export default function App() {
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [error, setError] = useState('');
-  const [viewMode, setViewMode] = useState<'classic' | 'rich'>('rich');
+  const [viewMode, setViewMode] = useState<'classic' | 'rich' | 'flow'>('rich');
   const [presentationMode, setPresentationMode] = useState(false);
   const [showChat, setShowChat] = useState(() => window.innerWidth > 700);
   const [showSource, setShowSource] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolsRef = useRef<HTMLDivElement>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
   const [exportFrame, setExportFrame] = useState<ExportFrame>('auto');
   const [reducedMotion, setReducedMotion] = useState(
     () => matchMedia('(prefers-reduced-motion: reduce)').matches,
@@ -99,15 +113,18 @@ export default function App() {
   const displayedGraph = isPresentation ? diagram?.graph : standardGraph;
 
   useEffect(() => {
-    if (!toolsOpen) return;
+    if (!toolsOpen && !exportOpen) return;
     function closeOutside(event: PointerEvent) {
-      if (!toolsRef.current?.contains(event.target as Node)) setToolsOpen(false);
+      const target = event.target as Node;
+      if (!toolsRef.current?.contains(target)) setToolsOpen(false);
+      if (!exportRef.current?.contains(target)) setExportOpen(false);
     }
     function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        setToolsOpen(false);
-        toolsRef.current?.querySelector('button')?.focus();
-      }
+      if (event.key !== 'Escape') return;
+      const open = toolsOpen ? toolsRef : exportRef;
+      setToolsOpen(false);
+      setExportOpen(false);
+      open.current?.querySelector('button')?.focus();
     }
     document.addEventListener('pointerdown', closeOutside);
     document.addEventListener('keydown', closeOnEscape);
@@ -115,7 +132,7 @@ export default function App() {
       document.removeEventListener('pointerdown', closeOutside);
       document.removeEventListener('keydown', closeOnEscape);
     };
-  }, [toolsOpen]);
+  }, [toolsOpen, exportOpen]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('light', theme === 'light');
@@ -347,9 +364,7 @@ export default function App() {
               strokeLinejoin="round"
             />
           </svg>
-          <span className="brand-name">
-            PulseGraph<span className="brand-dot">.</span>
-          </span>
+          <span className="brand-name">PulseGraph</span>
         </div>
         <nav className="app-header-right" aria-label="Diagram tools">
           <input
@@ -389,6 +404,18 @@ export default function App() {
                 </button>
                 <button
                   disabled={busy}
+                  className={viewMode === 'flow' && !isPresentation ? 'active' : ''}
+                  aria-pressed={viewMode === 'flow' && !isPresentation}
+                  onClick={() => {
+                    setViewMode('flow');
+                    setPresentationMode(false);
+                  }}
+                  title="Rounded nodes with curved connectors and flowing segments"
+                >
+                  Flow
+                </button>
+                <button
+                  disabled={busy}
                   className={
                     isPresentation ? 'active presentation-tab' : 'presentation-tab'
                   }
@@ -421,74 +448,178 @@ export default function App() {
                   ↷
                 </button>
               </div>
-              <details className="export-menu-wrap">
-                <summary className="btn-export-menu">Export</summary>
-                <div className="export-menu">
-                  {(['png', 'gif', 'slide', 'svg', 'source', 'document'] as const).map(
-                    (kind) => (
-                      <button
-                        key={kind}
-                        className="export-menu-item"
-                        disabled={busy || (kind === 'slide' && !diagram.roles)}
-                        title={
-                          kind === 'slide' && !diagram.roles
-                            ? 'Choose Presentation first'
-                            : undefined
-                        }
-                        onClick={(event) => {
-                          event.currentTarget.closest('details')?.removeAttribute('open');
-                          void exportDiagram(kind);
-                        }}
-                      >
-                        {
-                          {
-                            png: 'PNG',
-                            gif: 'GIF',
-                            slide: 'Slide PNG',
-                            svg: 'SVG',
-                            source: 'Mermaid source',
-                            document: 'Editable document',
-                          }[kind]
-                        }
-                      </button>
-                    ),
-                  )}
-                  <label className="export-menu-label">
-                    Frame size
-                    <select
-                      value={exportFrame}
-                      disabled={busy}
-                      onChange={(event) =>
-                        setExportFrame(event.target.value as ExportFrame)
-                      }
-                    >
-                      {[
-                        'auto',
-                        '16:9',
-                        '16:10',
-                        '4:3',
-                        '1:1',
-                        'a4-landscape',
-                        'a4-portrait',
-                      ].map((frame) => (
-                        <option key={frame} value={frame}>
-                          {frame === 'auto' ? 'Fit to content' : frame}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              </details>
-              <button
-                className="btn-icon"
-                onClick={() => setShowChat(!showChat)}
-                aria-expanded={showChat}
-              >
-                Chat
-              </button>
             </>
           )}
-          {!active ? (
+          {active && (
+            <div className="toolbar-cluster">
+              {diagram && (
+                <>
+                  <div className="menu-wrap export-menu-wrap" ref={exportRef}>
+                    <button
+                      className="cluster-btn menu-trigger"
+                      aria-expanded={exportOpen}
+                      disabled={busy}
+                      onClick={() => {
+                        setExportOpen((open) => !open);
+                        setToolsOpen(false);
+                      }}
+                    >
+                      <ToolIcon name="export" size={15} />
+                      Export
+                      <ToolIcon name="chevron" size={12} className="menu-chevron" />
+                    </button>
+                    {exportOpen && (
+                      <div className="menu-panel export-menu">
+                        <span className="menu-group-label">Image</span>
+                        {EXPORT_IMAGE_KINDS.map(({ kind, label, icon }) => (
+                          <button
+                            key={kind}
+                            disabled={busy || (kind === 'slide' && !diagram.roles)}
+                            title={
+                              kind === 'slide' && !diagram.roles
+                                ? 'Choose Presentation first'
+                                : undefined
+                            }
+                            onClick={() => {
+                              setExportOpen(false);
+                              void exportDiagram(kind);
+                            }}
+                          >
+                            <ToolIcon name={icon} /> {label}
+                          </button>
+                        ))}
+                        <span className="menu-group-label">Source</span>
+                        {EXPORT_SOURCE_KINDS.map(({ kind, label, icon }) => (
+                          <button
+                            key={kind}
+                            disabled={busy}
+                            onClick={() => {
+                              setExportOpen(false);
+                              void exportDiagram(kind);
+                            }}
+                          >
+                            <ToolIcon name={icon} /> {label}
+                          </button>
+                        ))}
+                        <label className="menu-field">
+                          Frame size
+                          <select
+                            value={exportFrame}
+                            disabled={busy}
+                            onChange={(event) =>
+                              setExportFrame(event.target.value as ExportFrame)
+                            }
+                          >
+                            {[
+                              'auto',
+                              '16:9',
+                              '16:10',
+                              '4:3',
+                              '1:1',
+                              'a4-landscape',
+                              'a4-portrait',
+                            ].map((frame) => (
+                              <option key={frame} value={frame}>
+                                {frame === 'auto' ? 'Fit to content' : frame}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className="cluster-btn"
+                    onClick={() => setShowChat(!showChat)}
+                    aria-pressed={showChat}
+                  >
+                    <ToolIcon name="chat" size={15} />
+                    Chat
+                  </button>
+                </>
+              )}
+              <div className="menu-wrap tools-menu-wrap" ref={toolsRef}>
+                <button
+                  className="cluster-btn menu-trigger"
+                  aria-label="Workspace tools"
+                  aria-expanded={toolsOpen}
+                  onClick={() => {
+                    setToolsOpen((open) => !open);
+                    setExportOpen(false);
+                  }}
+                >
+                  <ToolIcon name="tools" size={15} />
+                  Tools
+                  <ToolIcon name="chevron" size={12} className="menu-chevron" />
+                </button>
+                {toolsOpen && (
+                  <div className="menu-panel tools-menu">
+                    <span className="menu-group-label">Workspace</span>
+                    <button
+                      onClick={() => {
+                        setToolsOpen(false);
+                        setSettingsOpen(true);
+                      }}
+                      disabled={busy}
+                    >
+                      <ToolIcon name="settings" /> AI settings
+                    </button>
+                    <button
+                      onClick={() => {
+                        setToolsOpen(false);
+                        setTheme(theme === 'dark' ? 'light' : 'dark');
+                      }}
+                      disabled={busy}
+                    >
+                      <ToolIcon name={theme === 'dark' ? 'themeLight' : 'themeDark'} />
+                      {theme === 'dark' ? 'Use light theme' : 'Use dark theme'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setToolsOpen(false);
+                        importRef.current?.click();
+                      }}
+                      disabled={busy}
+                    >
+                      <ToolIcon name="import" /> Import diagram
+                    </button>
+                    {diagram && (
+                      <>
+                        <button
+                          disabled={busy}
+                          aria-pressed={!reducedMotion}
+                          onClick={() => {
+                            setToolsOpen(false);
+                            setReducedMotion(!reducedMotion);
+                          }}
+                        >
+                          <ToolIcon name={reducedMotion ? 'play' : 'pause'} />
+                          {reducedMotion ? 'Play animation' : 'Pause animation'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setToolsOpen(false);
+                            setShowSource(!showSource);
+                          }}
+                          aria-expanded={showSource}
+                        >
+                          <ToolIcon name="source" /> Edit Mermaid source
+                        </button>
+                        <button
+                          className="tools-reset"
+                          disabled={busy}
+                          onClick={resetWorkspace}
+                        >
+                          <ToolIcon name="reset" /> Reset workspace
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          {!active && (
             <div className="landing-actions">
               <a className="header-examples" href="#examples">
                 Examples
@@ -508,89 +639,13 @@ export default function App() {
                 AI settings
               </button>
               <button
-                className="btn-icon"
+                className="btn-icon btn-square"
                 aria-label={theme === 'dark' ? 'Use light theme' : 'Use dark theme'}
                 title={theme === 'dark' ? 'Use light theme' : 'Use dark theme'}
                 onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
               >
-                <span aria-hidden="true">{theme === 'dark' ? '☀' : '☾'}</span>
+                <ToolIcon name={theme === 'dark' ? 'themeLight' : 'themeDark'} />
               </button>
-            </div>
-          ) : (
-            <div className="tools-menu-wrap" ref={toolsRef}>
-              <button
-                className="btn-icon"
-                aria-label="Workspace tools"
-                aria-expanded={toolsOpen}
-                onClick={() => setToolsOpen((open) => !open)}
-              >
-                Tools <span aria-hidden="true">⌄</span>
-              </button>
-              {toolsOpen && (
-                <div className="tools-menu">
-                  <span className="tools-menu-heading">Workspace tools</span>
-                  <p className="tools-menu-description">Make this workspace yours.</p>
-                  <button
-                    onClick={() => {
-                      setToolsOpen(false);
-                      setSettingsOpen(true);
-                    }}
-                    disabled={busy}
-                  >
-                    <ToolIcon name="settings" /> AI settings
-                  </button>
-                  <button
-                    onClick={() => {
-                      setToolsOpen(false);
-                      setTheme(theme === 'dark' ? 'light' : 'dark');
-                    }}
-                    disabled={busy}
-                  >
-                    <ToolIcon name="theme" />
-                    {theme === 'dark' ? 'Use light theme' : 'Use dark theme'}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setToolsOpen(false);
-                      importRef.current?.click();
-                    }}
-                    disabled={busy}
-                  >
-                    <ToolIcon name="import" /> Import diagram
-                  </button>
-                  {diagram && (
-                    <>
-                      <button
-                        disabled={busy}
-                        aria-pressed={!reducedMotion}
-                        onClick={() => {
-                          setToolsOpen(false);
-                          setReducedMotion(!reducedMotion);
-                        }}
-                      >
-                        <ToolIcon name="animation" />
-                        {reducedMotion ? 'Play animation' : 'Pause animation'}
-                      </button>
-                      <button
-                        onClick={() => {
-                          setToolsOpen(false);
-                          setShowSource(!showSource);
-                        }}
-                        aria-expanded={showSource}
-                      >
-                        <ToolIcon name="source" /> Edit Mermaid source
-                      </button>
-                      <button
-                        className="tools-reset"
-                        disabled={busy}
-                        onClick={resetWorkspace}
-                      >
-                        <ToolIcon name="reset" /> Reset workspace
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
             </div>
           )}
         </nav>
@@ -613,11 +668,12 @@ export default function App() {
         <main className={'canvas-section ' + (diagram ? 'canvas-section--visible' : '')}>
           {diagram &&
             displayedGraph &&
-            (viewMode === 'rich' ? (
+            (viewMode !== 'classic' ? (
               <RichDiagramCanvas
                 graph={displayedGraph}
                 theme={theme}
                 reducedMotion={reducedMotion}
+                variant={viewMode === 'flow' ? 'flow' : 'rich'}
               />
             ) : (
               <DiagramCanvas
@@ -654,7 +710,7 @@ export default function App() {
             <span className="status-dot" />
             {workspace.saved
               ? 'Draft saved in this browser'
-              : 'Browser storage unavailable — export your document to keep it'}
+              : 'Browser storage unavailable. Export your document to keep it.'}
           </span>
           <span className="workspace-summary">
             {diagram.graph.nodes.length} nodes · {diagram.graph.edges.length} connections

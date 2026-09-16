@@ -16,10 +16,42 @@ interface LandingPageProps {
   onSettings: () => void;
 }
 
-const EXAMPLE_DETAILS = [
-  { symbol: '01', description: 'Connect services, data, and the people using them.' },
-  { symbol: '02', description: 'Make decisions and feedback loops easy to follow.' },
-  { symbol: '03', description: 'Trace an idea from its first commit to production.' },
+const EXAMPLE_DESCRIPTIONS = [
+  'A user request moving through a gateway, auth service, cache and database.',
+  'A yes or no check that loops back through debugging until it passes.',
+  'A commit running through tests, container build and deploy.',
+];
+
+const BROWSER_FACTS = [
+  {
+    title: 'No account',
+    body: 'Open the page and start. There is nothing to sign up for and nothing to install.',
+  },
+  {
+    title: 'Local by default',
+    body: 'Mermaid is parsed and rendered on your own machine. Drafts are recovered from local storage.',
+  },
+  {
+    title: 'Optional AI',
+    body: 'Add a DeepSeek key or point PulseGraph at a local Ollama model when you want plain English.',
+  },
+];
+
+const PREVIEW_EDGES = [
+  'M114 180 H166',
+  'M282 180 H310 Q322 180 322 168 V96 Q322 84 334 84 H354',
+  'M282 180 H354',
+  'M412 204 V248 Q412 260 400 260 H294 Q282 260 282 272 V290',
+  'M412 204 V290',
+];
+
+const PREVIEW_NODES = [
+  { x: 28, y: 156, w: 86, label: 'User' },
+  { x: 166, y: 156, w: 116, label: 'API gateway' },
+  { x: 354, y: 60, w: 116, label: 'Auth service' },
+  { x: 354, y: 156, w: 116, label: 'Product service' },
+  { x: 230, y: 290, w: 104, label: 'Redis cache' },
+  { x: 360, y: 290, w: 104, label: 'PostgreSQL' },
 ];
 
 function FlowPreview() {
@@ -28,11 +60,9 @@ function FlowPreview() {
   return (
     <div className={'flow-preview' + (paused ? ' is-paused' : '')}>
       <div className="preview-toolbar">
-        <span>
-          <span className="status-dot" /> A request, brought to life
-        </span>
+        <span className="preview-title">Request flow</span>
         <button type="button" onClick={() => setPaused(!paused)} aria-pressed={paused}>
-          {paused ? 'Play preview' : 'Pause preview'}
+          {paused ? 'Play' : 'Pause'}
         </button>
       </div>
       <svg
@@ -53,36 +83,22 @@ function FlowPreview() {
         </defs>
         <rect width="540" height="380" fill="url(#preview-grid)" />
         <g className="preview-connections">
-          <path d="M114 180 H166" />
-          <path d="M282 180 H310 Q322 180 322 168 V96 Q322 84 334 84 H354" />
-          <path d="M282 180 H354" />
-          <path d="M412 204 V248 Q412 260 400 260 H294 Q282 260 282 272 V290" />
-          <path d="M412 204 V290" />
+          {PREVIEW_EDGES.map((edge) => (
+            <path key={edge} d={edge} />
+          ))}
         </g>
         <g className="preview-beams">
-          <path d="M114 180 H166" />
-          <path d="M282 180 H310 Q322 180 322 168 V96 Q322 84 334 84 H354" />
-          <path d="M282 180 H354" />
-          <path d="M412 204 V248 Q412 260 400 260 H294 Q282 260 282 272 V290" />
-          <path d="M412 204 V290" />
+          {PREVIEW_EDGES.map((edge) => (
+            <path key={edge} d={edge} />
+          ))}
         </g>
-        {[
-          { x: 28, y: 156, w: 86, label: 'User', icon: '01' },
-          { x: 166, y: 156, w: 116, label: 'API gateway', icon: '02' },
-          { x: 354, y: 60, w: 116, label: 'Auth service', icon: '03' },
-          { x: 354, y: 156, w: 116, label: 'Product service', icon: '04' },
-          { x: 230, y: 290, w: 104, label: 'Redis cache', icon: '05' },
-          { x: 360, y: 290, w: 104, label: 'PostgreSQL', icon: '06' },
-        ].map((node) => (
+        {PREVIEW_NODES.map((node) => (
           <g
             key={node.label}
             className="preview-node"
             transform={`translate(${node.x} ${node.y})`}
           >
             <rect width={node.w} height="48" rx="10" />
-            <text className="preview-node-number" x="12" y="-9">
-              {node.icon}
-            </text>
             <text x={node.w / 2} y="28" textAnchor="middle">
               {node.label}
             </text>
@@ -95,12 +111,6 @@ function FlowPreview() {
           verify
         </text>
       </svg>
-      <div className="preview-caption">
-        <span>ONE FLOW. EVERY CONNECTION.</span>
-        <span>
-          Rich view <span aria-hidden="true">↗</span>
-        </span>
-      </div>
     </div>
   );
 }
@@ -118,19 +128,14 @@ export function LandingPage({
     <main className="landing-page">
       <section className="landing-hero" aria-labelledby="landing-title">
         <div className="hero-copy">
-          <p className="eyebrow">
-            <span className="status-dot" /> IDEAS IN MOTION
-          </p>
           <h1 id="landing-title">
-            Every flow
+            Mermaid in.
             <br />
-            has a story.
-            <br />
-            <span>Bring yours to life.</span>
+            <span>Animated diagram out.</span>
           </h1>
           <p className="hero-description">
-            Turn a few lines into a diagram people actually understand. Create, refine,
-            and share your next big idea in motion.
+            Paste a flowchart or describe your system in plain English. Pan, edit and
+            export it without leaving the browser.
           </p>
           <form
             className="creation-card"
@@ -140,9 +145,13 @@ export function LandingPage({
             }}
           >
             <label htmlFor="idle-chat-input">What are you building?</label>
+            <p className="creation-help" id="idle-chat-help">
+              Mermaid renders instantly. Plain English needs an AI key.
+            </p>
             <textarea
               id="idle-chat-input"
               aria-label="Diagram description or Mermaid source"
+              aria-describedby="idle-chat-help"
               value={input}
               onChange={(event) => onInputChange(event.target.value)}
               rows={3}
@@ -151,49 +160,57 @@ export function LandingPage({
               disabled={busy}
             />
             <div className="creation-actions">
-              <span>
-                Mermaid works instantly.
-                <br />
-                Connect AI for descriptions.
-              </span>
               <button
                 className="btn-primary"
                 type="submit"
                 disabled={busy || !input.trim()}
               >
-                Generate diagram <span aria-hidden="true">↗</span>
+                Generate diagram
               </button>
             </div>
           </form>
-          <p className="hero-note">
-            <span aria-hidden="true">✓</span> No account needed{' '}
-            <span aria-hidden="true">·</span> Mermaid renders in your browser
-          </p>
         </div>
         <div className="hero-visual">
-          <div className="visual-label">
-            <span>FROM THOUGHT TO FLOW</span>
-            <span>01 — 06</span>
-          </div>
           <FlowPreview />
-          <div className="visual-benefits">
-            <span>Editable by design</span>
-            <span>Animated by default</span>
-            <span>Ready to share</span>
-          </div>
         </div>
       </section>
+
+      <section className="landing-browser" aria-labelledby="browser-title">
+        <div className="browser-heading">
+          <h2 id="browser-title">Everything runs in the browser.</h2>
+          <p>
+            Your diagram, its Mermaid source and every edit stay on this device. AI is
+            optional and stays off until you add a key.
+          </p>
+        </div>
+        <figure className="browser-shot">
+          <img
+            src="/workspace.png"
+            alt="The PulseGraph workspace with an animated architecture diagram, the chat panel and the export menu"
+            width={1440}
+            height={810}
+            loading="lazy"
+            decoding="async"
+          />
+        </figure>
+        <div className="browser-facts">
+          {BROWSER_FACTS.map((fact) => (
+            <div key={fact.title}>
+              <h3>{fact.title}</h3>
+              <p>{fact.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section
         className="landing-examples"
         id="examples"
         aria-labelledby="examples-title"
       >
         <div className="examples-heading">
-          <div>
-            <p className="eyebrow">A LITTLE INSPIRATION</p>
-            <h2 id="examples-title">Start with a working example.</h2>
-          </div>
-          <p>No setup. Just open and make it yours.</p>
+          <h2 id="examples-title">Start from a working example.</h2>
+          <p>Each one opens straight into the editor.</p>
         </div>
         <div className="example-grid">
           {examples.map((example, index) => (
@@ -202,40 +219,27 @@ export function LandingPage({
               key={example.name}
               disabled={busy}
               onClick={() => onExample(example.source)}
-              aria-label={example.name}
             >
-              <span className="example-number">{EXAMPLE_DETAILS[index]?.symbol}</span>
-              <span>
-                <strong>{example.name}</strong>
-                <span className="example-description">
-                  {EXAMPLE_DETAILS[index]?.description}
-                </span>
-              </span>
-              <span className="example-arrow" aria-hidden="true">
-                ↗
-              </span>
+              <strong>{example.name}</strong>
+              <span className="example-description">{EXAMPLE_DESCRIPTIONS[index]}</span>
+              <span className="example-open">Open in editor</span>
             </button>
           ))}
         </div>
       </section>
+
       <footer className="landing-footer">
-        <div>
-          <strong>
-            PulseGraph<span className="footer-dot">.</span>
-          </strong>
-          <p>Clear thinking. Connected.</p>
+        <div className="footer-brand">
+          <strong>PulseGraph</strong>
+          <p>Animated architecture diagrams, made in the browser.</p>
         </div>
-        <p className="footer-formats">
-          Make it yours. Take it anywhere.
-          <br />
-          <span>PNG · Animated GIF · SVG · Mermaid</span>
-        </p>
         <nav aria-label="Footer">
-          <a href="#examples">Explore examples</a>
-          <button onClick={onSettings} disabled={busy}>
-            Connect AI
+          <a href="#examples">Examples</a>
+          <button type="button" onClick={onSettings} disabled={busy}>
+            AI settings
           </button>
-          <span>Open source · MIT licensed</span>
+          <span>Export to PNG, GIF, SVG or Mermaid</span>
+          <span>MIT licensed</span>
         </nav>
       </footer>
     </main>

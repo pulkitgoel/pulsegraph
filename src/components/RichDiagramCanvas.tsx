@@ -1,5 +1,5 @@
 import { scopedAnimations } from '../lib/animations';
-import { pointsToPath } from '../lib/svgPath';
+import { pointsToPath, pointsToRoundedPath } from '../lib/svgPath';
 import { useCanvasViewport } from '../lib/useCanvasViewport';
 import { useEffect, useRef, useMemo } from 'react';
 import gsap from 'gsap';
@@ -975,12 +975,14 @@ interface Props {
   graph: Graph;
   theme?: 'dark' | 'light';
   reducedMotion?: boolean;
+  variant?: 'rich' | 'flow';
 }
 
 export function RichDiagramCanvas({
   graph,
   theme = 'dark',
   reducedMotion = false,
+  variant = 'rich',
 }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const ctxRef = useRef<gsap.Context | null>(null);
@@ -1156,7 +1158,11 @@ export function RichDiagramCanvas({
           gsap.fromTo(
             grpEl,
             { opacity: 0 },
-            { opacity: 1, duration: 0.8, delay: minLevel * 0.6 },
+            {
+              opacity: 1,
+              duration: variant === 'flow' ? 0.35 : 0.8,
+              delay: minLevel * (variant === 'flow' ? 0.12 : 0.6),
+            },
           );
         }
       });
@@ -1172,8 +1178,8 @@ export function RichDiagramCanvas({
               opacity: 1,
               scale: 1,
               y: 0,
-              duration: 0.7,
-              delay: level * 0.6,
+              duration: variant === 'flow' ? 0.35 : 0.7,
+              delay: level * (variant === 'flow' ? 0.12 : 0.6),
               ease: 'back.out(1.2)',
               clearProps: 'transform',
             },
@@ -1324,7 +1330,8 @@ export function RichDiagramCanvas({
         if (!pathEl || !pulseEl) return;
 
         const srcLevel = nodeLevels.get(edge.from) || 0;
-        const edgeDelay = srcLevel * 0.6 + 0.4;
+        const edgeDelay =
+          variant === 'flow' ? srcLevel * 0.12 + 0.15 : srcLevel * 0.6 + 0.4;
 
         if (!edge.isBackEdge) {
           const length = pathEl.getTotalLength();
@@ -1367,6 +1374,23 @@ export function RichDiagramCanvas({
         }
 
         const duration = 1.5 + (i % 5) * 0.28;
+        if (variant === 'flow') {
+          const length = pathEl.getTotalLength();
+          gsap.set(pulseEl, {
+            opacity: 0,
+            strokeDasharray: `18 ${Math.max(18, length - 18)}`,
+            strokeDashoffset: 0,
+          });
+          gsap.to(pulseEl, { opacity: 1, duration: 0.25, delay: edgeDelay + 0.5 });
+          gsap.to(pulseEl, {
+            strokeDashoffset: -length,
+            duration,
+            repeat: -1,
+            ease: 'none',
+            delay: edgeDelay + 0.5,
+          });
+          return;
+        }
         gsap.set(pulseEl, { opacity: 0 });
         gsap.to(pulseEl, { opacity: 1, duration: 0.3, delay: edgeDelay + 0.5 });
         gsap.to(pulseEl, {
@@ -1401,7 +1425,7 @@ export function RichDiagramCanvas({
       });
     }, svgRef);
     return () => ctxRef.current?.revert();
-  }, [graph, nodeLevels, reducedMotion]);
+  }, [graph, nodeLevels, reducedMotion, variant]);
 
   return (
     <div
@@ -1497,6 +1521,7 @@ export function RichDiagramCanvas({
           height={height}
           style={{ display: 'block' }}
           xmlns="http://www.w3.org/2000/svg"
+          data-visual-style={variant}
         >
           <title>Flow diagram</title>
           <desc>
@@ -1626,7 +1651,10 @@ export function RichDiagramCanvas({
 
           {/* Edges */}
           {graph.edges.map((edge) => {
-            const d = pointsToPath(edge.points ?? []);
+            const d =
+              variant === 'flow'
+                ? pointsToRoundedPath(edge.points ?? [])
+                : pointsToPath(edge.points ?? []);
             if (!d) return null;
             const defaultEdgeColor = theme === 'light' ? '#94A3B8' : '#334155';
             const edgeColor = edgeFlowColors.get(edge.id) || defaultEdgeColor;
@@ -1658,8 +1686,16 @@ export function RichDiagramCanvas({
                   d={d}
                   data-dashed={edge.dashed || false}
                   fill="none"
-                  stroke={edgeColor}
-                  strokeWidth={edge.thick ? 4 : 2.5}
+                  stroke={
+                    variant === 'flow'
+                      ? theme === 'light'
+                        ? '#CBD2DE'
+                        : '#3B4659'
+                      : edgeColor
+                  }
+                  strokeWidth={
+                    variant === 'flow' ? (edge.thick ? 3 : 2) : edge.thick ? 4 : 2.5
+                  }
                   markerEnd={
                     edge.arrow === 'none'
                       ? undefined
@@ -1667,7 +1703,9 @@ export function RichDiagramCanvas({
                         ? 'url(#edge-cross)'
                         : edge.arrow === 'circle'
                           ? 'url(#edge-circle)'
-                          : 'url(#' + markerId + ')'
+                          : variant === 'flow'
+                            ? undefined
+                            : 'url(#' + markerId + ')'
                   }
                   strokeDasharray={edge.dashed ? '8 6' : undefined}
                   opacity={edge.dashed ? 0.75 : 1}
@@ -1699,13 +1737,26 @@ export function RichDiagramCanvas({
                     </text>
                   </g>
                 )}
-                <circle
-                  id={`pulse-${edge.id}`}
-                  r="6"
-                  fill={edgeColor}
-                  filter="url(#pg-rich)"
-                  opacity="0"
-                />
+                {variant === 'flow' ? (
+                  <path
+                    id={`pulse-${edge.id}`}
+                    className="flow-segment"
+                    d={d}
+                    fill="none"
+                    stroke={edgeColor}
+                    strokeWidth={edge.thick ? 4 : 3}
+                    strokeLinecap="round"
+                    opacity={reducedMotion ? 0.7 : 0}
+                  />
+                ) : (
+                  <circle
+                    id={`pulse-${edge.id}`}
+                    r="6"
+                    fill={edgeColor}
+                    filter="url(#pg-rich)"
+                    opacity="0"
+                  />
+                )}
               </g>
             );
           })}
@@ -1728,6 +1779,15 @@ export function RichDiagramCanvas({
             const startY = h / 2 - ((lines.length - 1) * lineH) / 2;
             const aiClass = '';
             const textColor = getContrastColor(node.color || st.bg, theme);
+            const flowText = theme === 'light' ? '#111827' : '#E7ECF5';
+            const flowFill = theme === 'light' ? '#F4F6FA' : '#151D2C';
+            const flowBorder = ['gateway', 'service', 'database', 'cache'].includes(
+              node.type,
+            )
+              ? '#6F8EFF'
+              : theme === 'light'
+                ? '#C9D0DC'
+                : '#46536A';
 
             // Deterministically computed levels for badges (1-indexed)
             const stepNumber = nodeLevels.has(node.id)
@@ -1742,39 +1802,53 @@ export function RichDiagramCanvas({
                   style={{ transformOrigin: `${w / 2}px ${h / 2}px` }}
                 >
                   {/* Glow */}
-                  <rect
-                    id={`glow-${node.id}`}
-                    x="-6"
-                    y="-6"
-                    width={w + 12}
-                    height={h + 12}
-                    rx="16"
-                    fill={st.glow}
-                    filter="url(#pg-rich)"
-                    opacity="0.25"
-                  />
+                  {variant === 'rich' && (
+                    <rect
+                      id={`glow-${node.id}`}
+                      x="-6"
+                      y="-6"
+                      width={w + 12}
+                      height={h + 12}
+                      rx="16"
+                      fill={st.glow}
+                      filter="url(#pg-rich)"
+                      opacity="0.25"
+                    />
+                  )}
 
                   {/* Glassmorphism background */}
                   <rect
                     width={w}
                     height={h}
-                    rx="12"
-                    fill={node.color || st.bg}
-                    stroke={node.color ? 'rgba(255,255,255,0.4)' : st.border}
-                    strokeWidth="1.5"
-                    filter="url(#glass)"
+                    rx={variant === 'flow' ? 14 : 12}
+                    fill={variant === 'flow' ? flowFill : node.color || st.bg}
+                    stroke={
+                      variant === 'flow'
+                        ? flowBorder
+                        : node.color
+                          ? 'rgba(255,255,255,0.4)'
+                          : st.border
+                    }
+                    strokeWidth={variant === 'flow' ? 1.25 : 1.5}
+                    filter={variant === 'flow' ? undefined : 'url(#glass)'}
                   />
-                  <rect
-                    width={w}
-                    height={h}
-                    rx="12"
-                    fill="url(#gradient-overlay)"
-                    opacity="0.15"
-                    pointerEvents="none"
-                  />
+                  {variant === 'rich' && (
+                    <rect
+                      width={w}
+                      height={h}
+                      rx="12"
+                      fill="url(#gradient-overlay)"
+                      opacity="0.15"
+                      pointerEvents="none"
+                    />
+                  )}
 
                   {/* Rich Icon */}
-                  <g transform={`translate(12, ${h / 2 - 12})`}>
+                  <g
+                    className={variant === 'flow' ? 'flow-node-icon' : undefined}
+                    transform={`translate(12, ${h / 2 - 12})`}
+                    color={variant === 'flow' ? flowBorder : undefined}
+                  >
                     <svg width="24" height="24" viewBox="0 0 24 24" overflow="visible">
                       <RichNodeIcon type={node.type} label={node.label} />
                     </svg>
@@ -1786,7 +1860,7 @@ export function RichDiagramCanvas({
                       key={li}
                       x={w / 2 + 14}
                       y={startY + li * lineH}
-                      fill={textColor}
+                      fill={variant === 'flow' ? flowText : textColor}
                       fontSize="12"
                       fontWeight="600"
                       textAnchor="middle"
@@ -1799,7 +1873,11 @@ export function RichDiagramCanvas({
 
                   {/* Step Badge */}
                   {stepNumber !== null && (
-                    <g transform={`translate(${w - 8}, -4)`}>
+                    <g
+                      className="step-badge"
+                      data-step-number={stepNumber}
+                      transform={`translate(${w - 8}, -4)`}
+                    >
                       <circle
                         cx="0"
                         cy="0"

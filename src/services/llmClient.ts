@@ -59,7 +59,7 @@ function httpError(status: number, detail?: string): Error {
 
   // Surface the provider's own message. A rejected model name or request field
   // is otherwise indistinguishable from any other failure.
-  const suffix = detail ? ' — ' + detail.slice(0, 300) : '';
+  const suffix = detail ? ': ' + detail.slice(0, 300) : '';
   return new Error('The AI provider returned HTTP ' + status + suffix, {
     cause: detail,
   });

@@ -5,6 +5,16 @@ import { computeLayout } from '../src/parser/layoutEngine.ts';
 import { buildBlueprintSvg } from '../src/render/blueprintSvg.ts';
 import { sanitizeAnimationCss } from '../src/lib/sanitizeCss.ts';
 import { presentationProfile } from '../src/lib/presentationProfile.ts';
+import { pointsToRoundedPath } from '../src/lib/svgPath.ts';
+
+test('flow paths round routed vertices without moving their endpoints', () => {
+  const path = pointsToRoundedPath([
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 80 },
+  ]);
+  assert.equal(path, 'M 0 0 L 82 0 Q 100 0 100 18 L 100 80');
+});
 
 test('operators and semicolons inside quoted node labels remain text', () => {
   const g = parseMermaid('flowchart LR; A["send --> receive; wait"] --> B; B --> C');

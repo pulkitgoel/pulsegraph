@@ -13,7 +13,7 @@ Connect DeepSeek or local Ollama when you want to describe changes in plain Engl
 ## Features
 
 - Responsive landing page with an animated flow preview, working examples, and light/dark themes.
-- Classic and Rich SVG diagrams with animated flow markers and icons.
+- Classic, Rich, and Flow SVG styles with animated markers, varied icons, and rounded connectors.
 - Direct Mermaid editing, mouse/touch pan, keyboard zoom, and Play/Pause.
 - Local draft recovery, 20-step undo/redo, source import, editable JSON import/export.
 - AI generation and refinement with cancellable requests and validated responses.
