@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { Cube, Export, ShieldCheck } from '@phosphor-icons/react';
 import './LandingPage.css';
 
 interface Example {
@@ -115,6 +116,91 @@ function FlowPreview() {
   );
 }
 
+function BrowserShowcase() {
+  const windowRef = useRef<HTMLElement>(null);
+
+  function updateTilt(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.pointerType === 'touch') return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const horizontal = (event.clientX - bounds.left) / bounds.width - 0.5;
+    const vertical = (event.clientY - bounds.top) / bounds.height - 0.5;
+    windowRef.current?.style.setProperty('--tilt-x', `${vertical * -7}deg`);
+    windowRef.current?.style.setProperty('--tilt-y', `${horizontal * 9}deg`);
+    windowRef.current?.style.setProperty('--glare-x', `${50 + horizontal * 35}%`);
+    windowRef.current?.style.setProperty('--glare-y', `${45 + vertical * 35}%`);
+  }
+
+  function resetTilt() {
+    windowRef.current?.style.setProperty('--tilt-x', '2deg');
+    windowRef.current?.style.setProperty('--tilt-y', '-3deg');
+    windowRef.current?.style.setProperty('--glare-x', '48%');
+    windowRef.current?.style.setProperty('--glare-y', '38%');
+  }
+
+  return (
+    <div className="browser-stage" onPointerMove={updateTilt} onPointerLeave={resetTilt}>
+      <div className="browser-orbit browser-orbit-one" aria-hidden />
+      <div className="browser-orbit browser-orbit-two" aria-hidden />
+      <div className="browser-depth-grid" aria-hidden />
+
+      <figure className="browser-shot" ref={windowRef}>
+        <div className="browser-window-bar" aria-hidden>
+          <span className="window-controls">
+            <i />
+            <i />
+            <i />
+          </span>
+          <span className="window-address">
+            <ShieldCheck size={14} weight="fill" />
+            pulsegraph.local/workspace
+          </span>
+          <span className="window-live">Live</span>
+        </div>
+        <div className="browser-screen">
+          <img
+            src="/workspace.png"
+            alt="The PulseGraph workspace with an animated architecture diagram, the chat panel and the export menu"
+            width={1440}
+            height={810}
+            loading="lazy"
+            decoding="async"
+          />
+          <span className="browser-screen-glare" aria-hidden />
+          <span className="browser-scan-line" aria-hidden />
+        </div>
+      </figure>
+
+      <div className="browser-float browser-float-local" aria-hidden>
+        <span className="float-icon">
+          <ShieldCheck size={18} weight="duotone" />
+        </span>
+        <span>
+          <strong>Private by default</strong>
+          <small>Your diagram stays local</small>
+        </span>
+      </div>
+      <div className="browser-float browser-float-render" aria-hidden>
+        <span className="float-icon">
+          <Cube size={18} weight="duotone" />
+        </span>
+        <span>
+          <strong>Live renderer</strong>
+          <small>SVG motion at 60 fps</small>
+        </span>
+      </div>
+      <div className="browser-float browser-float-export" aria-hidden>
+        <span className="float-icon">
+          <Export size={18} weight="duotone" />
+        </span>
+        <span>
+          <strong>Ready to share</strong>
+          <small>PNG · GIF · SVG</small>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function LandingPage({
   input,
   busy,
@@ -177,22 +263,14 @@ export function LandingPage({
 
       <section className="landing-browser" aria-labelledby="browser-title">
         <div className="browser-heading">
+          <span className="section-kicker">LOCAL-FIRST WORKSPACE</span>
           <h2 id="browser-title">Everything runs in the browser.</h2>
           <p>
             Your diagram, its Mermaid source and every edit stay on this device. AI is
             optional and stays off until you add a key.
           </p>
         </div>
-        <figure className="browser-shot">
-          <img
-            src="/workspace.png"
-            alt="The PulseGraph workspace with an animated architecture diagram, the chat panel and the export menu"
-            width={1440}
-            height={810}
-            loading="lazy"
-            decoding="async"
-          />
-        </figure>
+        <BrowserShowcase />
         <div className="browser-facts">
           {BROWSER_FACTS.map((fact) => (
             <div key={fact.title}>

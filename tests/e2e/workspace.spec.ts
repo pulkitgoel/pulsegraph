@@ -45,6 +45,36 @@ test('landing actions stay discoverable in both themes and on mobile', async ({
   }
 });
 
+test('browser showcase adds responsive depth and respects reduced motion', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const stage = page.locator('.browser-stage');
+  const shot = stage.locator('.browser-shot');
+  await stage.scrollIntoViewIfNeeded();
+  await expect(shot).toBeVisible();
+  await expect(shot.locator('img')).toHaveJSProperty('complete', true);
+
+  const bounds = await stage.boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.mouse.move(
+    bounds!.x + bounds!.width * 0.85,
+    bounds!.y + bounds!.height * 0.25,
+  );
+  await expect
+    .poll(() => shot.evaluate((element) => element.style.getPropertyValue('--tilt-y')))
+    .not.toBe('-3deg');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(shot).toHaveCSS('transform', 'none');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.browser-float-render')).toBeHidden();
+  expect(
+    await page.locator('.landing-page').evaluate((element) => element.scrollWidth),
+  ).toBeLessThanOrEqual(390);
+});
+
 async function configureAi(page: Page) {
   await openMore(page);
   await page.getByRole('button', { name: 'AI settings', exact: true }).click();
