@@ -324,6 +324,8 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
   // Extra space between zones so their bounding boxes never overlap
   // (must exceed 2× the zone padding used below).
   const ZONE_GAP = 80;
+  const ZONE_PADDING = 30;
+  const ZONE_ROUTE_CLEARANCE = 18;
   // Long pipelines wrap into serpentine rows so a 9-stage flow doesn't become
   // a 3000px-wide single row.
   const MAX_PER_ROW = 5;
@@ -433,6 +435,9 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
     return y;
   };
   const laneUse = new Map<number, number>(); // stack parallel arcs on shared lanes
+  const edgeOrder = new Map(
+    graph.edges.map((edge, index) => [`${edge.from}\u0000${edge.to}`, index]),
+  );
 
   /** Exit a node sideways and find a VERIFIED-clear vertical channel to `lane`
       (services sit at averaged x, so "half a column over" is not guaranteed clear). */
@@ -501,7 +506,7 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
     ];
   };
 
-  let edges: GraphEdge[] = graph.edges.map((e) => {
+  let edges: GraphEdge[] = graph.edges.map((e, edgeIndex) => {
     const f = byId.get(e.from),
       t = byId.get(e.to);
     if (!f || !t) return { ...e, points: [] };
@@ -516,7 +521,36 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
     // ── Same row ──
     if (Math.abs(fy - ty) < 1) {
       const dir = tx >= fx ? 1 : -1;
-      if (clearH(fy, fx + (dir * BOX_W) / 2, tx - (dir * BOX_W) / 2, skip)) {
+      const directRouteClear = clearH(
+        fy,
+        fx + (dir * BOX_W) / 2,
+        tx - (dir * BOX_W) / 2,
+        skip,
+      );
+      const reverseIndex = edgeOrder.get(`${e.to}\u0000${e.from}`);
+      const needsReciprocalLane =
+        directRouteClear && reverseIndex !== undefined && reverseIndex < edgeIndex;
+      if (needsReciprocalLane) {
+        const startTop = fy - BOX_H / 2;
+        const endTop = ty - BOX_H / 2;
+        const upperLane = startTop - 22;
+        if (
+          clearV(fx, startTop, upperLane, skipF) &&
+          clearH(upperLane, fx, tx, skip) &&
+          clearV(tx, upperLane, endTop, skipT)
+        ) {
+          return {
+            ...e,
+            points: [
+              { x: fx, y: startTop },
+              { x: fx, y: upperLane },
+              { x: tx, y: upperLane },
+              { x: tx, y: endTop },
+            ],
+          };
+        }
+      }
+      if (directRouteClear) {
         return {
           ...e,
           points: [
@@ -530,7 +564,10 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
       const key = Math.round(laneY);
       const k = laneUse.get(key) || 0;
       laneUse.set(key, k + 1);
-      laneY += 26 + k * 18;
+      // Clear the semantic zone border as well as the node boxes. The zone's
+      // bottom edge is ZONE_PADDING beyond its members; routing exactly there
+      // makes the connector visually merge with the dashed outer box.
+      laneY += ZONE_PADDING + ZONE_ROUTE_CLEARANCE + k * 18;
       const pts: { x: number; y: number }[] = [];
       if (clearV(fx, fy + BOX_H / 2 + 1, laneY, skipF)) {
         pts.push({ x: fx, y: fy + BOX_H / 2 }, { x: fx, y: laneY });
@@ -602,7 +639,7 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
         y1 = Math.max(y1, m.y! + BOX_H / 2);
       });
       // Generous side padding + extra room on top for the zone header.
-      const p = 30,
+      const p = ZONE_PADDING,
         topExtra = 26;
       return {
         id: 'zone_' + i,

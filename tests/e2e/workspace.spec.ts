@@ -212,6 +212,66 @@ test('long business presentation uses semantic zones and wrapped rows instead of
   await expect(page.locator('.tools-menu')).toHaveCount(0);
 });
 
+test('presentation decision loops do not overlap semantic zone borders', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  const source = `flowchart LR
+    A[Start] --> B{Is it working?}
+    B -->|Yes| D[Ship it]
+    B -->|No| C[Debug]
+    C --> B`;
+  const roles = {
+    A: 'lead-in',
+    B: 'pipeline',
+    C: 'pipeline',
+    D: 'output',
+  };
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'decision-loop.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ version: 1, source, roles })),
+  });
+  await page.getByRole('button', { name: 'Presentation', exact: true }).click();
+  await expect(page.locator('[id^="group-zone_"]')).toHaveCount(3);
+
+  const borderRuns = await page.locator('#pulsegraph-svg').evaluate((svg) => {
+    const boundaries = Array.from(
+      svg.querySelectorAll('[id^="group-zone_"] rect'),
+    ).flatMap((rect) => {
+      const y = Number(rect.getAttribute('y'));
+      return [y, y + Number(rect.getAttribute('height'))];
+    });
+    return Array.from(svg.querySelectorAll<SVGPathElement>('[id^="path-"]')).map(
+      (path) => {
+        const length = path.getTotalLength();
+        return boundaries.reduce((longest, boundary) => {
+          let run = 0;
+          let maxRun = 0;
+          for (let offset = 0; offset <= length; offset += 2) {
+            if (Math.abs(path.getPointAtLength(offset).y - boundary) < 0.5) {
+              run += 2;
+              maxRun = Math.max(maxRun, run);
+            } else {
+              run = 0;
+            }
+          }
+          return Math.max(longest, maxRun);
+        }, 0);
+      },
+    );
+  });
+  expect(Math.max(...borderRuns)).toBeLessThanOrEqual(4);
+  expect(await page.locator('#path-e_4').getAttribute('d')).not.toBe(
+    await page.locator('#path-e_3').getAttribute('d'),
+  );
+  await page.screenshot({ path: 'test-results/presentation-decision-loop.png' });
+  const gif = await exportFile(page, 'Animated GIF');
+  expect(gif.subarray(0, 3).toString()).toBe('GIF');
+  await writeFile('test-results/presentation-decision-loop.gif', gif);
+});
+
 test('Flow appearance uses rounded connectors, flowing segments and varied icons', async ({
   page,
 }) => {

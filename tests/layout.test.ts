@@ -145,6 +145,47 @@ test('role layout: all coordinates normalized (nothing negative)', () => {
   );
 });
 
+test('presentation decision loops clear zone borders and reciprocal edges', () => {
+  const graph = parseMermaid(`flowchart LR
+    A[Start] --> B{Is it working?}
+    B -->|Yes| D[Ship it]
+    B -->|No| C[Debug]
+    C --> B`);
+  const laid = roleBlueprintLayout(graph, {
+    A: 'lead-in',
+    B: 'pipeline',
+    C: 'pipeline',
+    D: 'output',
+  });
+  const yes = laid.edges.find((edge) => edge.from === 'B' && edge.to === 'D')!;
+  const forward = laid.edges.find((edge) => edge.from === 'B' && edge.to === 'C')!;
+  const reverse = laid.edges.find((edge) => edge.from === 'C' && edge.to === 'B')!;
+
+  for (const edge of laid.edges) {
+    const points = edge.points ?? [];
+    for (let index = 0; index < points.length - 1; index++) {
+      const start = points[index];
+      const end = points[index + 1];
+      if (start.y !== end.y) continue;
+      for (const group of laid.groups ?? []) {
+        const top = group.y! - group.height! / 2;
+        const bottom = group.y! + group.height! / 2;
+        assert.ok(
+          Math.abs(start.y - top) > 1 && Math.abs(start.y - bottom) > 1,
+          `edge ${edge.from}->${edge.to} overlaps ${group.label} border`,
+        );
+      }
+    }
+  }
+
+  assert.ok((yes.points ?? []).length > 2, 'blocked outcome edge should use a detour');
+  assert.equal((forward.points ?? []).length, 2, 'first reciprocal edge stays direct');
+  assert.ok(
+    (reverse.points ?? []).length > 2,
+    'reverse reciprocal edge should use a separate lane',
+  );
+});
+
 test('levels survive cycles: badges must not all collapse to "1"', () => {
   // SEC→User, A4→A1 and POLL→User put the entry node inside cycles; without
   // structural back-edge detection Kahn's finds no roots and every node
