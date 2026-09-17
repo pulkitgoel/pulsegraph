@@ -6,7 +6,7 @@ import { buildBlueprintSvg } from '../src/render/blueprintSvg.ts';
 import { sanitizeAnimationCss } from '../src/lib/sanitizeCss.ts';
 import { presentationProfile } from '../src/lib/presentationProfile.ts';
 import { pointsToRoundedPath } from '../src/lib/svgPath.ts';
-import { pulseTravelWindow } from '../src/lib/pulseTravel.ts';
+import { pulseTravelDistance, pulseTravelWindow } from '../src/lib/pulseTravel.ts';
 
 test('flow paths round routed vertices without moving their endpoints', () => {
   const path = pointsToRoundedPath([
@@ -22,6 +22,8 @@ test('animated edge markers stay inside the connector corridor', () => {
   assert.equal(window.start, 0.12);
   assert.equal(window.end, 0.88);
   assert.equal(window.inset, 24);
+  assert.equal(pulseTravelDistance(200, 0), 24);
+  assert.equal(pulseTravelDistance(200, 1), 176);
 });
 
 test('operators and semicolons inside quoted node labels remain text', () => {

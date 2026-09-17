@@ -1,16 +1,12 @@
 import { scopedAnimations } from '../lib/animations';
-import { pulseTravelWindow } from '../lib/pulseTravel';
 import { pointsToPath } from '../lib/svgPath';
 import { useCanvasViewport } from '../lib/useCanvasViewport';
 import { useEffect, useRef, useMemo } from 'react';
 import gsap from 'gsap';
-import { MotionPathPlugin } from 'gsap/MotionPathPlugin';
 import type { Graph, NodeType } from '../types';
 import { getGraphDimensions } from '../parser/layoutEngine';
 import { computeLevels } from '../lib/graphLevels';
 import { labelAnchor } from '../lib/edgeLabel';
-
-gsap.registerPlugin(MotionPathPlugin);
 
 const NODE_STYLES_DARK: Record<NodeType, { bg: string; border: string; dot: string }> = {
   user: { bg: '#12093A', border: '#8B5CF6', dot: '#A78BFA' },
@@ -296,12 +292,11 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
       });
 
       // 4. Animate Edges
-      graph.edges.forEach((edge, i) => {
+      graph.edges.forEach((edge) => {
         const pathEl = svgRef.current?.getElementById(
           `path-${edge.id}`,
         ) as SVGPathElement | null;
-        const pulseEl = svgRef.current?.getElementById(`pulse-${edge.id}`);
-        if (!pathEl || !pulseEl) return;
+        if (!pathEl) return;
         // SVG paints marker-end even when the path is hidden by a dash offset.
         // Hold the arrowhead until the connector has actually been revealed;
         // otherwise branches show detached triangles beside still-hidden nodes.
@@ -362,42 +357,6 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
             },
           });
         }
-
-        const duration = 1.5 + (i % 5) * 0.28;
-        gsap.set(pulseEl, { opacity: 0 });
-        gsap.to(pulseEl, { opacity: 1, duration: 0.3, delay: edgeDelay + 0.5 });
-        const pulseWindow = pulseTravelWindow(pathEl.getTotalLength());
-        gsap.to(pulseEl, {
-          duration: duration,
-          repeat: -1,
-          ease: 'none',
-          delay: edgeDelay + 0.5,
-          motionPath: {
-            path: pathEl as SVGPathElement,
-            align: pathEl as SVGPathElement,
-            alignOrigin: [0.5, 0.5],
-            start: pulseWindow.start,
-            end: pulseWindow.end,
-          },
-          onRepeat: () => {
-            context.add(() => {
-              const glowEl = svgRef.current?.getElementById(`glow-${edge.to}`);
-              if (glowEl) {
-                gsap.fromTo(
-                  glowEl,
-                  { opacity: 0.8, scale: 1.05, transformOrigin: 'center' },
-                  {
-                    opacity: 0.07,
-                    scale: 1,
-                    duration: 0.6,
-                    ease: 'power2.out',
-                    overwrite: 'auto',
-                  },
-                );
-              }
-            });
-          },
-        });
       });
 
       // 5. Continuous Icon Animations (Migrated from CSS for SVG export compatibility)
@@ -576,6 +535,7 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
           height={height}
           style={{ display: 'block' }}
           xmlns="http://www.w3.org/2000/svg"
+          data-visual-style="classic"
         >
           <title>Flow diagram</title>
           <desc>
@@ -677,8 +637,6 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
           {graph.edges.map((edge) => {
             const d = pointsToPath(edge.points ?? []);
             if (!d) return null;
-            const src = graph.nodes.find((n) => n.id === edge.from);
-            const dotColor = src ? NODE_STYLES[src.type].dot : '#00f2fe';
             // Anchor labels near the SOURCE on routed arcs (see lib/edgeLabel).
             const mid = labelAnchor(edge.points);
             const labelW = edge.label
@@ -747,13 +705,6 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
                     </text>
                   </g>
                 )}
-                <circle
-                  id={`pulse-${edge.id}`}
-                  r="5"
-                  fill={dotColor}
-                  filter="url(#pg)"
-                  opacity="0"
-                />
               </g>
             );
           })}

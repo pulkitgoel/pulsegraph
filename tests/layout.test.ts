@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMermaid } from '../src/parser/mermaidParser.ts';
-import { roleBlueprintLayout } from '../src/parser/layoutEngine.ts';
+import { computeLayout, roleBlueprintLayout } from '../src/parser/layoutEngine.ts';
 import { buildBlueprintSvg } from '../src/render/blueprintSvg.ts';
 import { computeLevels, maxLevel } from '../src/lib/graphLevels.ts';
 import { labelAnchor } from '../src/lib/edgeLabel.ts';
@@ -183,6 +183,61 @@ test('presentation decision loops clear zone borders and reciprocal edges', () =
   assert.ok(
     (reverse.points ?? []).length > 2,
     'reverse reciprocal edge should use a separate lane',
+  );
+});
+
+test('delivery branches stay parallel and retry loops route below the diagram', () => {
+  const source = `flowchart LR
+    A[GitHub] --> B[Tests]
+    B --> C{Pass?}
+    C -->|Yes| D[Build container]
+    D --> E[Deploy]
+    C -->|No| F[Fix code]
+    F --> A`;
+  const parsed = parseMermaid(source);
+  const standard = computeLayout(parsed);
+  const retry = standard.edges.find((edge) => edge.from === 'F' && edge.to === 'A')!;
+  const nodeBottom = Math.max(...standard.nodes.map((node) => node.y! + node.height / 2));
+  const retryLane = (retry.points ?? []).find(
+    (point, index, points) =>
+      index > 0 && point.y === points[index - 1].y && point.y > nodeBottom,
+  );
+  assert.ok(retryLane, 'standard retry edge should use a lane below every node');
+  const standardTarget = standard.nodes.find((node) => node.id === 'A')!;
+  const standardEnd = retry.points!.at(-1)!;
+  assert.ok(
+    standardEnd.y >= standardTarget.y! + standardTarget.height / 2 + 8,
+    'standard retry arrow should stop outside the target box',
+  );
+
+  const presentation = roleBlueprintLayout(parsed, {
+    A: 'lead-in',
+    B: 'pipeline',
+    C: 'pipeline',
+    D: 'pipeline',
+    E: 'output',
+    F: 'pipeline',
+  });
+  const byId = new Map(presentation.nodes.map((node) => [node.id, node]));
+  assert.equal(byId.get('B')!.y, byId.get('C')!.y);
+  assert.equal(byId.get('C')!.y, byId.get('D')!.y);
+  assert.equal(byId.get('D')!.y, byId.get('E')!.y);
+  assert.equal(byId.get('D')!.x, byId.get('F')!.x);
+  assert.ok(byId.get('F')!.y! > byId.get('D')!.y!, 'repair branch should be below');
+  const presentationRetry = presentation.edges.find(
+    (edge) => edge.from === 'F' && edge.to === 'A',
+  )!;
+  const presentationBottom = Math.max(
+    ...presentation.nodes.map((node) => node.y! + node.height / 2),
+  );
+  assert.ok(
+    (presentationRetry.points ?? []).some((point) => point.y > presentationBottom),
+    'presentation retry edge should clear the complete diagram',
+  );
+  const presentationEnd = presentationRetry.points!.at(-1)!;
+  assert.ok(
+    presentationEnd.y >= byId.get('A')!.y! + byId.get('A')!.height / 2 + 8,
+    'presentation retry arrow should stop outside the target box',
   );
 });
 

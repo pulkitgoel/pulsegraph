@@ -10,6 +10,7 @@ import { sendMessage, designPresentation } from './services/llmService';
 import type { ExportFrame } from './services/gifExporter';
 import { buildBlueprintSvg } from './render/blueprintSvg';
 import { createDocument, deserializeDocument, serializeDocument } from './lib/document';
+import { DIAGRAM_EXAMPLES } from './lib/examples';
 import { readPreference, writePreference } from './lib/storage';
 import {
   clearSessionApiKey,
@@ -22,24 +23,6 @@ import type { ChatMessage, LlmProvider } from './types';
 
 export type LoadingStep = 'generating' | 'validating' | 'rendering' | null;
 type ExportKind = 'png' | 'gif' | 'slide' | 'svg' | 'source' | 'document';
-
-const EXAMPLES = [
-  {
-    name: 'Request flow',
-    source:
-      'flowchart LR\nU((User)) --> API[API Gateway]\nAPI --> AUTH[Auth Service]\nAPI --> S[Product Service]\nS --> DB[(PostgreSQL)]\nS -.-> CACHE[/Redis/]',
-  },
-  {
-    name: 'Decision loop',
-    source:
-      'flowchart TB\nA[Start] --> B{Is it working?}\nB -->|Yes| C[Ship it]\nB -->|No| D[Debug]\nD --> B',
-  },
-  {
-    name: 'Delivery pipeline',
-    source:
-      'flowchart LR\nA[GitHub] --> B[Tests]\nB --> C{Pass?}\nC -->|Yes| D[Build container]\nD --> E[Deploy]\nC -->|No| F[Fix code]\nF --> A',
-  },
-];
 
 const EXPORT_IMAGE_KINDS = [
   { kind: 'png', label: 'PNG', icon: 'image' },
@@ -696,7 +679,7 @@ export default function App() {
           <LandingPage
             input={input}
             busy={busy}
-            examples={EXAMPLES}
+            examples={DIAGRAM_EXAMPLES}
             onInputChange={setInput}
             onSubmit={() => void submit(input)}
             onExample={applySource}

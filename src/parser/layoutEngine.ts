@@ -10,6 +10,25 @@ const CHAR_PX = 7.2;
 const MIN_WIDTH = 130;
 const MAX_WIDTH = 320;
 const ICON_PAD = 38;
+const BACK_EDGE_ARROW_CLEARANCE = 9;
+
+function stopBeforeTarget(
+  points: { x: number; y: number }[],
+  clearance = BACK_EDGE_ARROW_CLEARANCE,
+) {
+  if (points.length < 2) return points;
+  const result = points.map((point) => ({ ...point }));
+  const end = result[result.length - 1];
+  const previous = result[result.length - 2];
+  const dx = end.x - previous.x;
+  const dy = end.y - previous.y;
+  const length = Math.hypot(dx, dy);
+  if (!length) return result;
+  const distance = Math.min(clearance, length / 2);
+  end.x -= (dx / length) * distance;
+  end.y -= (dy / length) * distance;
+  return result;
+}
 
 function getLabelLines(label: string, maxWidth: number): string[] {
   const cleanLabel = label.replace(/\\n/g, '\n').replace(/<br\s*\/?>/g, '\n');
@@ -123,6 +142,17 @@ export function computeLayout(graph: Graph): Graph {
     return { ...n, x: nd?.x ?? 0, y: nd?.y ?? 0 };
   });
 
+  // Cyclic return paths must clear the entire diagram, not only their two
+  // endpoints. Otherwise a lower sibling branch can force route repair to
+  // choose a short lane above the nodes, where it collides visually with
+  // step badges and box borders.
+  const layoutMaxY = Math.max(
+    ...positionedNodes.map((node) => node.y! + (node.height || NODE_HEIGHT) / 2),
+  );
+  const layoutMinX = Math.min(
+    ...positionedNodes.map((node) => node.x! - (node.width || MIN_WIDTH) / 2),
+  );
+
   let backEdgeCount = 0;
 
   let positionedEdges: GraphEdge[] = graph.edges.map((e) => {
@@ -135,39 +165,45 @@ export function computeLayout(graph: Graph): Graph {
       const fh = (from.height || NODE_HEIGHT) / 2;
       const th = (to.height || NODE_HEIGHT) / 2;
       const fw = (from.width || MIN_WIDTH) / 2;
-      const tw = (to.width || MIN_WIDTH) / 2;
       const fx = from.x ?? 0,
         fy = from.y ?? 0;
       const tx = to.x ?? 0,
         ty = to.y ?? 0;
 
       if (!isVertical) {
-        const localMaxY = Math.max(fy + fh, ty + th);
-        const curveY = localMaxY + 30 + backEdgeCount * 25;
+        const curveY = layoutMaxY + 30 + backEdgeCount * 25;
+        const away = fx >= tx ? 1 : -1;
+        const startX = fx + away * fw;
+        const startChannelX = startX + away * 12;
         return {
           ...e,
           isBackEdge: true,
-          points: [
-            { x: fx, y: fy + fh },
-            { x: fx, y: curveY },
-            { x: (fx + tx) / 2, y: curveY + 15 },
+          points: stopBeforeTarget([
+            { x: startX, y: fy },
+            { x: startChannelX, y: fy },
+            { x: startChannelX, y: curveY },
             { x: tx, y: curveY },
             { x: tx, y: ty + th },
-          ],
+          ]),
         };
       } else {
-        const localMinX = Math.min(fx - fw, tx - tw);
-        const curveX = localMinX - 30 - backEdgeCount * 25;
+        const curveX = layoutMinX - 30 - backEdgeCount * 25;
+        const away = fy >= ty ? 1 : -1;
+        const startY = fy + away * fh;
+        const startChannelY = startY + away * 12;
+        const endY = ty - away * th;
+        const endChannelY = endY - away * 12;
         return {
           ...e,
           isBackEdge: true,
-          points: [
-            { x: fx - fw, y: fy },
-            { x: curveX, y: fy },
-            { x: curveX - 15, y: (fy + ty) / 2 },
-            { x: curveX, y: ty },
-            { x: tx - tw, y: ty },
-          ],
+          points: stopBeforeTarget([
+            { x: fx, y: startY },
+            { x: fx, y: startChannelY },
+            { x: curveX, y: startChannelY },
+            { x: curveX, y: endChannelY },
+            { x: tx, y: endChannelY },
+            { x: tx, y: endY },
+          ]),
         };
       }
     }
@@ -320,6 +356,29 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
   const services = nodes.filter((n) => roleOf(n.id) === 'service').sort(byLv);
   const outputs = nodes.filter((n) => roleOf(n.id) === 'output').sort(byLv);
 
+  // Prefer the branch that reaches a declared output without following a
+  // structural back edge. This keeps success/delivery paths on the main row
+  // and moves retry or repair branches below them.
+  const backEdgeIds = findBackEdgeIds(graph);
+  const forwardOut = new Map(nodes.map((node) => [node.id, [] as string[]]));
+  graph.edges.forEach((edge) => {
+    if (!backEdgeIds.has(edge.id)) forwardOut.get(edge.from)?.push(edge.to);
+  });
+  const outputIds = new Set(outputs.map((node) => node.id));
+  const outputReachability = new Map<string, boolean>();
+  const reachesOutput = (id: string, visiting = new Set<string>()): boolean => {
+    if (outputIds.has(id)) return true;
+    const cached = outputReachability.get(id);
+    if (cached !== undefined) return cached;
+    if (visiting.has(id)) return false;
+    const nextVisiting = new Set(visiting).add(id);
+    const result = (forwardOut.get(id) ?? []).some((next) =>
+      reachesOutput(next, nextVisiting),
+    );
+    outputReachability.set(id, result);
+    return result;
+  };
+
   const PIPE_Y = MARGIN + 46 + BOX_H / 2;
   // Extra space between zones so their bounding boxes never overlap
   // (must exceed 2× the zone padding used below).
@@ -340,30 +399,74 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
   });
   if (leadIn.length && pipeline.length) cx += ZONE_GAP;
 
-  // Pipeline: balanced serpentine rows (odd rows reversed) so consecutive
-  // stages stay adjacent even across a row break.
+  // Small decision diagrams use one column per topological level. Sibling
+  // branches share a column on separate rows, so they cannot be mistaken for
+  // consecutive stages. Larger workflows retain the compact serpentine grid.
   const pipeStartX = cx;
-  const nRows = pipeline.length ? Math.ceil(pipeline.length / MAX_PER_ROW) : 0;
-  const perRow = nRows ? Math.ceil(pipeline.length / nRows) : 0;
-  pipeline.forEach((n, i) => {
-    const r = Math.floor(i / perRow);
-    let c = i % perRow;
-    if (r % 2 === 1) c = perRow - 1 - c;
-    n.x = pipeStartX + c * colStep + BOX_W / 2;
-    n.y = PIPE_Y + r * (BOX_H + ROW_GAP);
-  });
-  if (pipeline.length) cx = pipeStartX + Math.min(pipeline.length, perRow) * colStep;
-  const pipeBottomY = pipeline.length ? PIPE_Y + (nRows - 1) * (BOX_H + ROW_GAP) : PIPE_Y;
+  const pipelineOrder = new Map(pipeline.map((node, index) => [node.id, index]));
+  const columns = [...new Set(pipeline.map((node) => level.get(node.id) ?? 0))]
+    .sort((a, b) => a - b)
+    .map((columnLevel) =>
+      pipeline
+        .filter((node) => (level.get(node.id) ?? 0) === columnLevel)
+        .sort(
+          (a, b) =>
+            Number(reachesOutput(b.id)) - Number(reachesOutput(a.id)) ||
+            pipelineOrder.get(a.id)! - pipelineOrder.get(b.id)!,
+        ),
+    );
+  const useBranchGrid =
+    profile.layout === 'branching' &&
+    pipeline.length <= MAX_PER_ROW + 2 &&
+    columns.some((column) => column.length > 1);
 
-  // Outputs: stacked to the right, centred on the pipeline's vertical extent.
+  let nRows: number;
+  let pipeBottomY: number;
+  if (useBranchGrid) {
+    nRows = Math.max(...columns.map((column) => column.length));
+    columns.forEach((column, columnIndex) => {
+      column.forEach((node, rowIndex) => {
+        node.x = pipeStartX + columnIndex * colStep + BOX_W / 2;
+        node.y = PIPE_Y + rowIndex * (BOX_H + ROW_GAP);
+      });
+    });
+    cx = pipeStartX + columns.length * colStep;
+    pipeBottomY = PIPE_Y + (nRows - 1) * (BOX_H + ROW_GAP);
+  } else {
+    nRows = pipeline.length ? Math.ceil(pipeline.length / MAX_PER_ROW) : 0;
+    const perRow = nRows ? Math.ceil(pipeline.length / nRows) : 0;
+    pipeline.forEach((node, index) => {
+      const row = Math.floor(index / perRow);
+      let column = index % perRow;
+      if (row % 2 === 1) column = perRow - 1 - column;
+      node.x = pipeStartX + column * colStep + BOX_W / 2;
+      node.y = PIPE_Y + row * (BOX_H + ROW_GAP);
+    });
+    if (pipeline.length) cx = pipeStartX + Math.min(pipeline.length, perRow) * colStep;
+    pipeBottomY = pipeline.length ? PIPE_Y + (nRows - 1) * (BOX_H + ROW_GAP) : PIPE_Y;
+  }
+
+  // Align each output with its incoming stage when possible. This keeps the
+  // primary branch visually continuous instead of centring a lone result
+  // between the success and retry rows.
   if (leadIn.length + pipeline.length > 0 && outputs.length) cx += ZONE_GAP;
   const rightX = cx + BOX_W / 2;
   const oGap = BOX_H + 40;
   const outCenterY = (PIPE_Y + pipeBottomY) / 2;
   outputs.forEach((n, j) => {
     n.x = rightX;
-    n.y = outCenterY + (j - (outputs.length - 1) / 2) * oGap;
+    const incomingYs = (inc.get(n.id) ?? [])
+      .map((id) => byId.get(id))
+      .filter((node): node is GraphNode => Boolean(node && node.x))
+      .map((node) => node.y!);
+    n.y = incomingYs.length
+      ? incomingYs.reduce((sum, y) => sum + y, 0) / incomingYs.length
+      : outCenterY + (j - (outputs.length - 1) / 2) * oGap;
   });
+  const outputsByY = [...outputs].sort((a, b) => a.y! - b.y!);
+  for (let index = 1; index < outputsByY.length; index++) {
+    outputsByY[index].y = Math.max(outputsByY[index].y!, outputsByY[index - 1].y! + oGap);
+  }
 
   // Services: a band below the LAST pipeline row, x near connected nodes.
   const svcY = pipeBottomY + BOX_H + 130;
@@ -517,6 +620,33 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
     const skip = new Set([f.id, t.id]);
     const skipF = new Set([f.id]);
     const skipT = new Set([t.id]);
+
+    // Structural back edges represent retry/feedback loops. Give them a
+    // dedicated lane below every node and semantic zone so they never share
+    // a branch corridor or run above step badges.
+    if (backEdgeIds.has(e.id)) {
+      const baseLane = Math.max(...boxes.map((box) => box.y1));
+      const key = Math.round(baseLane);
+      const laneIndex = laneUse.get(key) || 0;
+      laneUse.set(key, laneIndex + 1);
+      const lane = baseLane + ZONE_PADDING + ZONE_ROUTE_CLEARANCE + laneIndex * 18;
+      const points: { x: number; y: number }[] = [];
+      let exitX = fx;
+      if (clearV(fx, fy + BOX_H / 2 + 1, lane, skipF)) {
+        points.push({ x: fx, y: fy + BOX_H / 2 });
+      } else {
+        const jog = jogToLane(fx, fy, tx >= fx ? 1 : -1, lane, skipF);
+        points.push(...jog.pts);
+        exitX = jog.chX;
+      }
+      points.push({ x: exitX, y: lane });
+      if (clearV(tx, ty + BOX_H / 2 + 1, lane, skipT)) {
+        points.push({ x: tx, y: lane }, { x: tx, y: ty + BOX_H / 2 });
+      } else {
+        points.push(...entryViaChannel(tx, ty, tx >= exitX ? 1 : -1, lane, skipT));
+      }
+      return { ...e, points: stopBeforeTarget(points), isBackEdge: true };
+    }
 
     // ── Same row ──
     if (Math.abs(fy - ty) < 1) {

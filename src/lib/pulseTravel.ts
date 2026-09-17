@@ -7,3 +7,10 @@ export function pulseTravelWindow(length: number) {
   const inset = Math.min(length * 0.4, Math.max(14, Math.min(32, length * 0.12)));
   return { start: inset / length, end: 1 - inset / length, inset };
 }
+
+/** Convert animation progress into a path distance using the safe travel window. */
+export function pulseTravelDistance(length: number, progress: number): number {
+  const window = pulseTravelWindow(length);
+  const boundedProgress = Math.min(1, Math.max(0, progress));
+  return length * (window.start + (window.end - window.start) * boundedProgress);
+}

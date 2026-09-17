@@ -272,7 +272,9 @@ test('presentation decision loops do not overlap semantic zone borders', async (
   await writeFile('test-results/presentation-decision-loop.gif', gif);
 });
 
-test('rich and classic pulse markers stay out of node boxes', async ({ page }) => {
+test('rich markers clear node boxes and classic stays free of pulse dots', async ({
+  page,
+}) => {
   await page.goto('/');
   const source = `flowchart LR
     G[GitHub] --> T[Tests]
@@ -290,6 +292,10 @@ test('rich and classic pulse markers stay out of node boxes', async ({ page }) =
   for (const mode of ['Rich', 'Classic']) {
     await page.getByRole('button', { name: mode, exact: true }).click();
     await page.waitForTimeout(3600);
+    if (mode === 'Classic') {
+      await expect(page.locator('[id^="pulse-"]')).toHaveCount(0);
+      continue;
+    }
     const overlapping = await page.locator('#pulsegraph-svg').evaluate((svg) => {
       const boxes = Array.from(svg.querySelectorAll('[id^="node-group-"]')).map((node) =>
         node.getBoundingClientRect(),
@@ -308,6 +314,90 @@ test('rich and classic pulse markers stay out of node boxes', async ({ page }) =
     });
     expect(overlapping, `${mode} pulse marker overlaps a node`).toBe(false);
   }
+});
+
+test('delivery example preserves branch semantics and clear retry lanes in every mode', async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  const source = `flowchart LR
+    A[GitHub] --> B[Tests]
+    B --> C{Pass?}
+    C -->|Yes| D[Build container]
+    D --> E[Deploy]
+    C -->|No| F[Fix code]
+    F --> A`;
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'delivery.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(
+      JSON.stringify({
+        version: 1,
+        source,
+        roles: {
+          A: 'lead-in',
+          B: 'pipeline',
+          C: 'pipeline',
+          D: 'pipeline',
+          E: 'output',
+          F: 'pipeline',
+        },
+      }),
+    ),
+  });
+
+  const retryClearsNodes = () =>
+    page.locator('#pulsegraph-svg').evaluate((svg) => {
+      const nodes = Array.from(svg.querySelectorAll('[id^="node-group-"]'));
+      const nodeBottom = Math.max(
+        ...nodes.map((node) => node.getBoundingClientRect().bottom),
+      );
+      const retry = Array.from(svg.querySelectorAll<SVGPathElement>('[id^="path-"]')).at(
+        -1,
+      )!;
+      const matrix = retry.getScreenCTM()!;
+      let routeBottom = -Infinity;
+      for (let distance = 0; distance <= retry.getTotalLength(); distance += 2) {
+        const point = retry.getPointAtLength(distance).matrixTransform(matrix);
+        routeBottom = Math.max(routeBottom, point.y);
+      }
+      return routeBottom > nodeBottom + 8;
+    });
+
+  for (const mode of ['Classic', 'Rich', 'Flow']) {
+    await page.getByRole('button', { name: mode, exact: true }).click();
+    await expect.poll(retryClearsNodes).toBe(true);
+    await page.screenshot({ path: `test-results/delivery-${mode.toLowerCase()}.png` });
+    const gif = await exportFile(page, 'Animated GIF');
+    expect(gif.subarray(0, 3).toString()).toBe('GIF');
+    await writeFile(`test-results/delivery-${mode.toLowerCase()}.gif`, gif);
+  }
+
+  await page.getByRole('button', { name: 'Rich', exact: true }).click();
+  await page.getByRole('button', { name: 'Presentation', exact: true }).click();
+  const positions = await page.locator('#pulsegraph-svg').evaluate((svg) => {
+    const box = (id: string) =>
+      svg.querySelector(`#node-group-${id}`)!.getBoundingClientRect();
+    const center = (rect: DOMRect) => ({
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    });
+    return {
+      build: center(box('D')),
+      deploy: center(box('E')),
+      fix: center(box('F')),
+    };
+  });
+  expect(Math.abs(positions.build.y - positions.deploy.y)).toBeLessThan(2);
+  expect(Math.abs(positions.build.x - positions.fix.x)).toBeLessThan(2);
+  expect(positions.fix.y).toBeGreaterThan(positions.build.y + 40);
+  await expect.poll(retryClearsNodes).toBe(true);
+  await page.screenshot({ path: 'test-results/delivery-presentation.png' });
+  const presentationGif = await exportFile(page, 'Animated GIF');
+  expect(presentationGif.subarray(0, 3).toString()).toBe('GIF');
+  await writeFile('test-results/delivery-presentation.gif', presentationGif);
 });
 
 test('Flow appearance uses rounded connectors, flowing segments and varied icons', async ({

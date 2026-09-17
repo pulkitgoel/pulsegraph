@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { parseMermaid } from '../src/parser/mermaidParser.ts';
 import { computeLevels, maxLevel } from '../src/lib/graphLevels.ts';
 import { sanitizeAnimationCss, sanitizeClassName } from '../src/lib/sanitizeCss.ts';
+import { DIAGRAM_EXAMPLES } from '../src/lib/examples.ts';
 
 const ids = (g: ReturnType<typeof parseMermaid>) => g.nodes.map((n) => n.id).sort();
 const edgePairs = (g: ReturnType<typeof parseMermaid>) =>
@@ -33,6 +34,33 @@ test('landing-page example #1 (chain after a labeled edge) parses fully', () => 
   assert.equal(g.edges.find((e) => e.to === 'D')!.label, 'No');
   assert.equal(g.warnings?.length, 0);
   assert.equal(g.layout, 'TB');
+});
+
+test('every landing-page example has valid, intentional topology', () => {
+  const expected = new Map([
+    ['Request flow', ['API->AUTH', 'API->S', 'S->CACHE', 'S->DB', 'U->API']],
+    ['Decision loop', ['A->B', 'B->C', 'B->D', 'D->B']],
+    ['Delivery pipeline', ['A->B', 'B->C', 'C->D', 'C->F', 'D->E', 'F->A']],
+  ]);
+
+  for (const example of DIAGRAM_EXAMPLES) {
+    const graph = parseMermaid(example.source);
+    assert.equal(graph.warnings?.length, 0, `${example.name} has parser warnings`);
+    assert.deepEqual(edgePairs(graph), expected.get(example.name), example.name);
+  }
+
+  const delivery = parseMermaid(
+    DIAGRAM_EXAMPLES.find((example) => example.name === 'Delivery pipeline')!.source,
+  );
+  assert.equal(
+    delivery.edges.find((edge) => edge.from === 'C' && edge.to === 'D')!.label,
+    'Yes',
+  );
+  assert.equal(
+    delivery.edges.find((edge) => edge.from === 'C' && edge.to === 'F')!.label,
+    'No',
+  );
+  assert.equal(delivery.nodes.find((node) => node.id === 'C')!.type, 'gateway');
 });
 
 // ── Labels ────────────────────────────────────────────────────────────────────

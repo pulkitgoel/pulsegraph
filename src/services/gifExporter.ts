@@ -1,5 +1,5 @@
 import { exportGeometry, type ExportFrame } from './exportGeometry';
-import { pulseTravelWindow } from '../lib/pulseTravel';
+import { pulseTravelDistance, pulseTravelWindow } from '../lib/pulseTravel';
 export type { ExportFrame } from './exportGeometry';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -207,34 +207,42 @@ export async function exportGif(
 ): Promise<Blob> {
   const clone = snapshot(element);
   const flowStyle = clone.getAttribute('data-visual-style') === 'flow';
+  const classicStyle = clone.getAttribute('data-visual-style') === 'classic';
   clone.querySelectorAll('[filter]').forEach((node) => node.removeAttribute('filter'));
   const paths = Array.from(clone.querySelectorAll<SVGPathElement>('[id^="path-"]'));
-  const flows = paths.map((path) => {
-    const sourcePath = element.querySelector<SVGPathElement>(`#${path.id}`);
-    const length = safePathLength(sourcePath) || safePathLength(path);
-    if (flowStyle) {
-      const segment = clone.querySelector<SVGPathElement>(
-        `#pulse-${path.id.slice('path-'.length)}`,
-      );
-      if (!segment) throw new Error('Flow animation is unavailable for this edge.');
-      const metrics = flowSegmentMetrics(length);
-      const pulseWindow = pulseTravelWindow(length);
-      segment.setAttribute('stroke-dasharray', metrics.dasharray);
-      segment.setAttribute('opacity', '1');
-      return {
-        kind: 'segment' as const,
-        segment,
-        length,
-        startOffset: -(length * pulseWindow.start),
-        endOffset: -(length * pulseWindow.end),
-      };
-    }
-    const circle = document.createElementNS(SVG_NS, 'circle');
-    circle.setAttribute('r', '5');
-    circle.setAttribute('fill', theme === 'light' ? '#6D3BFF' : '#67E8F9');
-    path.parentNode?.appendChild(circle);
-    return { kind: 'marker' as const, path, circle, length };
-  });
+  const flows = classicStyle
+    ? []
+    : paths.map((path) => {
+        const sourcePath = element.querySelector<SVGPathElement>(`#${path.id}`);
+        const length = safePathLength(sourcePath) || safePathLength(path);
+        if (flowStyle) {
+          const segment = clone.querySelector<SVGPathElement>(
+            `#pulse-${path.id.slice('path-'.length)}`,
+          );
+          if (!segment) throw new Error('Flow animation is unavailable for this edge.');
+          const metrics = flowSegmentMetrics(length);
+          const pulseWindow = pulseTravelWindow(length);
+          segment.setAttribute('stroke-dasharray', metrics.dasharray);
+          segment.setAttribute('opacity', '1');
+          return {
+            kind: 'segment' as const,
+            segment,
+            length,
+            startOffset: -(length * pulseWindow.start),
+            endOffset: -(length * pulseWindow.end),
+          };
+        }
+        const circle = document.createElementNS(SVG_NS, 'circle');
+        circle.setAttribute('r', '5');
+        const edgeId = path.id.slice('path-'.length);
+        const livePulse = element.querySelector<SVGElement>(`#pulse-${edgeId}`);
+        circle.setAttribute(
+          'fill',
+          livePulse?.getAttribute('fill') || (theme === 'light' ? '#475569' : '#94A3B8'),
+        );
+        path.parentNode?.appendChild(circle);
+        return { kind: 'marker' as const, path, circle, length };
+      });
   // Full-resolution GIFs remain crisp in presentations and social posts. Frames
   // are transferred to the worker one at a time, limiting main-thread memory.
   const { root, width, height } = frameSvg(clone, frame, 2560);
@@ -256,7 +264,9 @@ export async function exportGif(
           );
           return;
         }
-        const point = flow.path.getPointAtLength((flow.length * index) / frameCount);
+        const point = flow.path.getPointAtLength(
+          pulseTravelDistance(flow.length, index / frameCount),
+        );
         flow.circle.setAttribute('cx', String(point.x));
         flow.circle.setAttribute('cy', String(point.y));
       });
