@@ -1,12 +1,16 @@
 import { scopedAnimations } from '../lib/animations';
+import { pulseTravelWindow } from '../lib/pulseTravel';
 import { pointsToPath } from '../lib/svgPath';
 import { useCanvasViewport } from '../lib/useCanvasViewport';
 import { useEffect, useRef, useMemo } from 'react';
 import gsap from 'gsap';
+import { MotionPathPlugin } from 'gsap/MotionPathPlugin';
 import type { Graph, NodeType } from '../types';
 import { getGraphDimensions } from '../parser/layoutEngine';
 import { computeLevels } from '../lib/graphLevels';
 import { labelAnchor } from '../lib/edgeLabel';
+
+gsap.registerPlugin(MotionPathPlugin);
 
 const NODE_STYLES_DARK: Record<NodeType, { bg: string; border: string; dot: string }> = {
   user: { bg: '#12093A', border: '#8B5CF6', dot: '#A78BFA' },
@@ -292,7 +296,7 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
       });
 
       // 4. Animate Edges
-      graph.edges.forEach((edge) => {
+      graph.edges.forEach((edge, index) => {
         const pathEl = svgRef.current?.getElementById(
           `path-${edge.id}`,
         ) as SVGPathElement | null;
@@ -354,6 +358,28 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
                   ease: 'none',
                 });
               });
+            },
+          });
+        }
+        const pulse = svgRef.current?.getElementById(`pulse-${edge.id}`);
+        if (pulse) {
+          const travel = pulseTravelWindow(pathEl.getTotalLength());
+          gsap.to(pulse, {
+            opacity: 1,
+            duration: 0.2,
+            delay: edgeDelay + 1.2,
+          });
+          gsap.to(pulse, {
+            duration: 1.5 + (index % 5) * 0.28,
+            repeat: -1,
+            ease: 'none',
+            delay: edgeDelay + 1.2,
+            motionPath: {
+              path: pathEl,
+              align: pathEl,
+              alignOrigin: [0.5, 0.5],
+              start: travel.start,
+              end: travel.end,
             },
           });
         }
@@ -584,16 +610,6 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
             >
               <polygon points="0 0,8 3,0 6" fill={isLight ? '#94A3B8' : '#334155'} />
             </marker>
-            <marker
-              id="arr-b"
-              markerWidth="8"
-              markerHeight="6"
-              refX="7"
-              refY="3"
-              orient="auto"
-            >
-              <polygon points="0 0,8 3,0 6" fill={isLight ? '#6366F1' : '#6366F1'} />
-            </marker>
           </defs>
 
           {/* ── Groups (subgraph boxes) ── */}
@@ -649,15 +665,7 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
                   d={d}
                   data-dashed={edge.dashed || false}
                   fill="none"
-                  stroke={
-                    edge.isBackEdge
-                      ? isLight
-                        ? '#6366F1'
-                        : '#4338CA'
-                      : isLight
-                        ? '#CBD5E1'
-                        : '#1E293B'
-                  }
+                  stroke={isLight ? '#CBD5E1' : '#1E293B'}
                   strokeWidth={edge.thick ? 4 : 2}
                   strokeDasharray={edge.dashed ? '6 6' : undefined}
                   markerEnd={
@@ -667,9 +675,7 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
                         ? 'url(#edge-cross)'
                         : edge.arrow === 'circle'
                           ? 'url(#edge-circle)'
-                          : edge.isBackEdge
-                            ? 'url(#arr-b)'
-                            : 'url(#arr)'
+                          : 'url(#arr)'
                   }
                 />
                 {edge.label && mid && (
@@ -687,15 +693,7 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
                     <text
                       x={mid.x}
                       y={mid.y}
-                      fill={
-                        edge.isBackEdge
-                          ? isLight
-                            ? '#4F46E5'
-                            : '#818CF8'
-                          : isLight
-                            ? '#475569'
-                            : '#475569'
-                      }
+                      fill={isLight ? '#475569' : '#94A3B8'}
                       fontSize="9.5"
                       textAnchor="middle"
                       dominantBaseline="middle"
@@ -705,6 +703,16 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
                     </text>
                   </g>
                 )}
+                <circle
+                  id={`pulse-${edge.id}`}
+                  r="5"
+                  fill={
+                    NODE_STYLES[
+                      graph.nodes.find((node) => node.id === edge.from)?.type ?? 'service'
+                    ].dot
+                  }
+                  opacity="0"
+                />
               </g>
             );
           })}

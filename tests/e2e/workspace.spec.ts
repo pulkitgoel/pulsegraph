@@ -1,5 +1,41 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readFile, writeFile } from 'node:fs/promises';
+import { BENEFIT_FLOW } from '../fixtures/benefitFlow';
+
+test('Classic benefit flow exports neutral retry connectors with separate arrow entries', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'benefits.mmd',
+    mimeType: 'text/plain',
+    buffer: Buffer.from(BENEFIT_FLOW),
+  });
+  await page.getByRole('button', { name: 'Classic', exact: true }).click();
+  for (const theme of ['light', 'dark']) {
+    await openMore(page);
+    await page.getByRole('button', { name: `Use ${theme} theme`, exact: true }).click();
+    const connectors = await page.locator('#pulsegraph-svg').evaluate((svg) => {
+      const paths = Array.from(svg.querySelectorAll<SVGPathElement>('[id^="path-"]'));
+      const retry = paths.at(-1)!;
+      const incoming = paths[4];
+      const end = retry.getPointAtLength(retry.getTotalLength());
+      const other = incoming.getPointAtLength(incoming.getTotalLength());
+      return {
+        strokes: [...new Set(paths.map((path) => path.getAttribute('stroke')))],
+        markers: [...new Set(paths.map((path) => path.getAttribute('marker-end')))],
+        entryDistance: Math.hypot(end.x - other.x, end.y - other.y),
+      };
+    });
+    expect(connectors.strokes).toEqual([theme === 'light' ? '#CBD5E1' : '#1E293B']);
+    expect(connectors.markers).toEqual(['url(#arr)']);
+    expect(connectors.entryDistance).toBeGreaterThan(30);
+    const gif = await exportFile(page, 'Animated GIF');
+    expect(gif.subarray(0, 3).toString()).toBe('GIF');
+    await writeFile(`test-results/benefits-classic-${theme}.gif`, gif);
+  }
+});
 
 async function example(page: Page) {
   await page.goto('/');
@@ -272,9 +308,7 @@ test('presentation decision loops do not overlap semantic zone borders', async (
   await writeFile('test-results/presentation-decision-loop.gif', gif);
 });
 
-test('rich markers clear node boxes and classic stays free of pulse dots', async ({
-  page,
-}) => {
+test('rich and classic retain moving markers clear of node boxes', async ({ page }) => {
   await page.goto('/');
   const source = `flowchart LR
     G[GitHub] --> T[Tests]
@@ -292,10 +326,13 @@ test('rich markers clear node boxes and classic stays free of pulse dots', async
   for (const mode of ['Rich', 'Classic']) {
     await page.getByRole('button', { name: mode, exact: true }).click();
     await page.waitForTimeout(3600);
-    if (mode === 'Classic') {
-      await expect(page.locator('[id^="pulse-"]')).toHaveCount(0);
-      continue;
-    }
+    await expect(page.locator('[id^="pulse-"]').first()).toBeAttached();
+    const firstPulse = page.locator('[id^="pulse-"]').first();
+    await expect(firstPulse).toHaveCSS('opacity', '1');
+    const initialTransform = await firstPulse.getAttribute('transform');
+    await expect
+      .poll(() => firstPulse.getAttribute('transform'))
+      .not.toBe(initialTransform);
     const overlapping = await page.locator('#pulsegraph-svg').evaluate((svg) => {
       const boxes = Array.from(svg.querySelectorAll('[id^="node-group-"]')).map((node) =>
         node.getBoundingClientRect(),

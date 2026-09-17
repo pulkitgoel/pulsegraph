@@ -4,7 +4,7 @@ export function pulseTravelWindow(length: number) {
   // Leave room for the marker radius and its glow. A small connector still
   // gets a usable travel corridor, while long routed edges keep a generous
   // visual gap from both endpoint boxes.
-  const inset = Math.min(length * 0.4, Math.max(14, Math.min(32, length * 0.12)));
+  const inset = Math.min(length * 0.4, Math.max(24, Math.min(32, length * 0.12)));
   return { start: inset / length, end: 1 - inset / length, inset };
 }
 

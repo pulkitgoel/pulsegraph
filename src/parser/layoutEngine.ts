@@ -191,8 +191,9 @@ export function computeLayout(graph: Graph): Graph {
         const away = fy >= ty ? 1 : -1;
         const startY = fy + away * fh;
         const startChannelY = startY + away * 12;
-        const endY = ty - away * th;
-        const endChannelY = endY - away * 12;
+        // Enter from the left so the retry arrow does not share the normal
+        // incoming connector's top/bottom port.
+        const endX = tx - (to.width || MIN_WIDTH) / 2;
         return {
           ...e,
           isBackEdge: true,
@@ -200,9 +201,8 @@ export function computeLayout(graph: Graph): Graph {
             { x: fx, y: startY },
             { x: fx, y: startChannelY },
             { x: curveX, y: startChannelY },
-            { x: curveX, y: endChannelY },
-            { x: tx, y: endChannelY },
-            { x: tx, y: endY },
+            { x: curveX, y: ty },
+            { x: endX, y: ty },
           ]),
         };
       }

@@ -5,6 +5,7 @@
  * polling loop, fan-in services.
  */
 import { test } from 'node:test';
+import { BENEFIT_FLOW } from './fixtures/benefitFlow.ts';
 import assert from 'node:assert/strict';
 import { parseMermaid } from '../src/parser/mermaidParser.ts';
 import { computeLayout, roleBlueprintLayout } from '../src/parser/layoutEngine.ts';
@@ -184,6 +185,20 @@ test('presentation decision loops clear zone borders and reciprocal edges', () =
     (reverse.points ?? []).length > 2,
     'reverse reciprocal edge should use a separate lane',
   );
+});
+
+test('vertical benefit retry uses a separate side port from the incoming arrow', () => {
+  for (const direction of ['TD', 'BT']) {
+    const graph = computeLayout(parseMermaid(BENEFIT_FLOW.replace('TD', direction)));
+    const target = graph.nodes.find((node) => node.id === 'F')!;
+    const retry = graph.edges.find((edge) => edge.from === 'L' && edge.to === 'F')!;
+    const incoming = graph.edges.find((edge) => edge.from === 'E' && edge.to === 'F')!;
+    const end = retry.points!.at(-1)!;
+    const normalEnd = incoming.points!.at(-1)!;
+    assert.equal(end.y, target.y);
+    assert.ok(end.x <= target.x! - target.width / 2 - 8);
+    assert.ok(Math.hypot(end.x - normalEnd.x, end.y - normalEnd.y) > 30);
+  }
 });
 
 test('delivery branches stay parallel and retry loops route below the diagram', () => {
