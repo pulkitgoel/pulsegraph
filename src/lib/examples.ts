@@ -1,23 +1,30 @@
 export interface DiagramExample {
   name: string;
+  description: string;
   source: string;
 }
 
 /** Curated examples shown on the landing page and covered by parser regressions. */
 export const DIAGRAM_EXAMPLES: DiagramExample[] = [
   {
-    name: 'Request flow',
+    name: 'Production API architecture',
+    description:
+      'Map traffic from a customer through edge security, services, data stores and monitoring.',
     source:
-      'flowchart LR\nU((User)) --> API[API Gateway]\nAPI --> AUTH[Auth Service]\nAPI --> S[Product Service]\nS --> DB[(PostgreSQL)]\nS -.-> CACHE[/Redis/]',
+      'flowchart LR\nU((Customer)) --> CDN[DNS and CDN]\nCDN --> WAF[Web Application Firewall]\nWAF --> LB[Load Balancer]\nLB --> API[API Service]\nAPI --> AUTH[Identity Provider]\nAPI --> CACHE[/Redis Cache/]\nAPI --> DB[(PostgreSQL)]\nAPI -. logs .-> OBS[Monitoring]',
   },
   {
-    name: 'Decision loop',
+    name: 'Incident response',
+    description:
+      'Show how an on-call team triages an alert, mitigates impact and closes the review loop.',
     source:
-      'flowchart TB\nA[Start] --> B{Is it working?}\nB -->|Yes| C[Ship it]\nB -->|No| D[Debug]\nD --> B',
+      'flowchart TD\nA[Monitoring alert] --> B[On-call triage]\nB --> C{Customer impact?}\nC -->|High| D[Declare incident]\nC -->|Low| E[Create ticket]\nD --> F[Mitigate or rollback]\nF --> G{Service healthy?}\nG -->|No| B\nG -->|Yes| H[Post-incident review]\nE --> H',
   },
   {
-    name: 'Delivery pipeline',
+    name: 'Secure CI/CD pipeline',
+    description:
+      'Follow a pull request through tests, security checks, staging, production and rollback.',
     source:
-      'flowchart LR\nA[GitHub] --> B[Tests]\nB --> C{Pass?}\nC -->|Yes| D[Build container]\nD --> E[Deploy]\nC -->|No| F[Fix code]\nF --> A',
+      'flowchart TD\nA[Pull request] --> B[Unit tests]\nB --> C[Security scan]\nC --> D{Checks pass?}\nD -->|No| E[Fix findings]\nE --> A\nD -->|Yes| F[Build container]\nF --> G[Deploy staging]\nG --> H{Smoke tests pass?}\nH -->|No| I[Rollback staging]\nH -->|Yes| J[Promote production]',
   },
 ];

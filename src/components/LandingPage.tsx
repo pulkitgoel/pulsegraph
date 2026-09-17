@@ -4,6 +4,7 @@ import './LandingPage.css';
 
 interface Example {
   name: string;
+  description: string;
   source: string;
 }
 
@@ -16,12 +17,6 @@ interface LandingPageProps {
   onExample: (source: string) => void;
   onSettings: () => void;
 }
-
-const EXAMPLE_DESCRIPTIONS = [
-  'A user request moving through a gateway, auth service, cache and database.',
-  'A yes or no check that loops back through debugging until it passes.',
-  'A commit running through tests, container build and deploy.',
-];
 
 const BROWSER_FACTS = [
   {
@@ -61,7 +56,7 @@ function FlowPreview() {
   return (
     <div className={'flow-preview' + (paused ? ' is-paused' : '')}>
       <div className="preview-toolbar">
-        <span className="preview-title">Request flow</span>
+        <span className="preview-title">Production API</span>
         <button type="button" onClick={() => setPaused(!paused)} aria-pressed={paused}>
           {paused ? 'Play' : 'Pause'}
         </button>
@@ -291,7 +286,7 @@ export function LandingPage({
           <p>Each one opens straight into the editor.</p>
         </div>
         <div className="example-grid">
-          {examples.map((example, index) => (
+          {examples.map((example) => (
             <button
               className="example-card"
               key={example.name}
@@ -299,7 +294,7 @@ export function LandingPage({
               onClick={() => onExample(example.source)}
             >
               <strong>{example.name}</strong>
-              <span className="example-description">{EXAMPLE_DESCRIPTIONS[index]}</span>
+              <span className="example-description">{example.description}</span>
               <span className="example-open">Open in editor</span>
             </button>
           ))}

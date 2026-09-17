@@ -39,7 +39,7 @@ test('Classic benefit flow exports neutral retry connectors with separate arrow 
 
 async function example(page: Page) {
   await page.goto('/');
-  await page.getByRole('button', { name: /^Request flow/ }).click();
+  await page.getByRole('button', { name: /^Production API architecture/ }).click();
   await expect(page.locator('#pulsegraph-svg')).toBeVisible();
 }
 
@@ -161,17 +161,25 @@ test('landing preview, examples, footer and workspace menu work at narrow widths
       .getByRole('navigation', { name: 'Footer', exact: true })
       .getByRole('link', { name: 'Examples', exact: true })
       .click();
-    await expect(page.getByRole('button', { name: /^Decision loop/ })).toBeInViewport();
+    await expect(
+      page.getByRole('button', { name: /^Incident response/ }),
+    ).toBeInViewport();
   }
-  for (const name of ['Request flow', 'Decision loop', 'Delivery pipeline']) {
+  for (const name of [
+    'Production API architecture',
+    'Incident response',
+    'Secure CI/CD pipeline',
+  ]) {
     await page.getByRole('button', { name: new RegExp(`^${name}`) }).click();
     await expect(page.locator('#pulsegraph-svg')).toBeVisible();
+    await expect(page.locator('[id^="node-group-"]').first()).toHaveCSS('opacity', '1');
     await expect(page.locator('.workspace-summary')).toContainText('connections');
     await openMore(page);
     await expect(
       page.getByRole('button', { name: 'Reset workspace', exact: true }),
     ).toBeVisible();
-    await page.screenshot({ path: `test-results/menu-${name.replaceAll(' ', '-')}.png` });
+    const slug = name.replaceAll(/[^a-z0-9]+/gi, '-');
+    await page.screenshot({ path: `test-results/menu-${slug}.png` });
     await page.keyboard.press('Escape');
     await expect(page.locator('.tools-menu')).toHaveCount(0);
     await openMore(page);

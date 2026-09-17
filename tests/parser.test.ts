@@ -38,9 +38,27 @@ test('landing-page example #1 (chain after a labeled edge) parses fully', () => 
 
 test('every landing-page example has valid, intentional topology', () => {
   const expected = new Map([
-    ['Request flow', ['API->AUTH', 'API->S', 'S->CACHE', 'S->DB', 'U->API']],
-    ['Decision loop', ['A->B', 'B->C', 'B->D', 'D->B']],
-    ['Delivery pipeline', ['A->B', 'B->C', 'C->D', 'C->F', 'D->E', 'F->A']],
+    [
+      'Production API architecture',
+      [
+        'API->AUTH',
+        'API->CACHE',
+        'API->DB',
+        'API->OBS',
+        'CDN->WAF',
+        'LB->API',
+        'U->CDN',
+        'WAF->LB',
+      ],
+    ],
+    [
+      'Incident response',
+      ['A->B', 'B->C', 'C->D', 'C->E', 'D->F', 'E->H', 'F->G', 'G->B', 'G->H'],
+    ],
+    [
+      'Secure CI/CD pipeline',
+      ['A->B', 'B->C', 'C->D', 'D->E', 'D->F', 'E->A', 'F->G', 'G->H', 'H->I', 'H->J'],
+    ],
   ]);
 
   for (const example of DIAGRAM_EXAMPLES) {
@@ -50,17 +68,18 @@ test('every landing-page example has valid, intentional topology', () => {
   }
 
   const delivery = parseMermaid(
-    DIAGRAM_EXAMPLES.find((example) => example.name === 'Delivery pipeline')!.source,
+    DIAGRAM_EXAMPLES.find((example) => example.name === 'Secure CI/CD pipeline')!.source,
   );
   assert.equal(
-    delivery.edges.find((edge) => edge.from === 'C' && edge.to === 'D')!.label,
+    delivery.edges.find((edge) => edge.from === 'D' && edge.to === 'F')!.label,
     'Yes',
   );
   assert.equal(
-    delivery.edges.find((edge) => edge.from === 'C' && edge.to === 'F')!.label,
+    delivery.edges.find((edge) => edge.from === 'D' && edge.to === 'E')!.label,
     'No',
   );
-  assert.equal(delivery.nodes.find((node) => node.id === 'C')!.type, 'gateway');
+  assert.equal(delivery.nodes.find((node) => node.id === 'D')!.type, 'gateway');
+  assert.equal(delivery.nodes.find((node) => node.id === 'H')!.type, 'gateway');
 });
 
 // ── Labels ────────────────────────────────────────────────────────────────────

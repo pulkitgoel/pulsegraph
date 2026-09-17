@@ -28,14 +28,17 @@ Use **Node.js 24** and npm. A .nvmrc file is included.
     npm ci
     npm run dev
 
-Open the URL printed by Vite and click **Request flow**, or paste:
+Open the URL printed by Vite and click **Production API architecture**, or paste:
 
     flowchart LR
-      U((User)) --> API[API Gateway]
-      API --> AUTH[Auth Service]
-      API --> S[Product Service]
-      S --> DB[(PostgreSQL)]
-      S -.-> CACHE[/Redis/]
+      U((Customer)) --> CDN[DNS and CDN]
+      CDN --> WAF[Web Application Firewall]
+      WAF --> LB[Load Balancer]
+      LB --> API[API Service]
+      API --> AUTH[Identity Provider]
+      API --> CACHE[/Redis Cache/]
+      API --> DB[(PostgreSQL)]
+      API -. logs .-> OBS[Monitoring]
 
 Use **Tools → Edit Mermaid source** to change the diagram. Invalid input preserves
 your current diagram. **Tools → Reset workspace** clears the saved draft and starts
