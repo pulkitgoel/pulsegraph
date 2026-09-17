@@ -237,7 +237,9 @@ export async function exportGif(
       'fill',
       livePulse?.getAttribute('fill') || (theme === 'light' ? '#475569' : '#94A3B8'),
     );
-    path.parentNode?.appendChild(circle);
+    // Keep the animated marker below the edge-label group so short tags such
+    // as Yes and No remain readable in every exported frame.
+    path.parentNode?.insertBefore(circle, path.nextSibling);
     return { kind: 'marker' as const, path, circle, length };
   });
   // Full-resolution GIFs remain crisp in presentations and social posts. Frames

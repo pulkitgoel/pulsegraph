@@ -1741,33 +1741,6 @@ export function RichDiagramCanvas({
                   strokeDasharray={edge.dashed ? '8 6' : undefined}
                   opacity={edge.dashed ? 0.75 : 1}
                 />
-                {edge.label && mid && (
-                  <g>
-                    <rect
-                      x={mid.x - labelW / 2}
-                      y={mid.y - 12}
-                      width={labelW}
-                      height={24}
-                      rx="6"
-                      fill={edgeBg}
-                      opacity="0.9"
-                      stroke={edgeStroke}
-                      strokeWidth="1.5"
-                    />
-                    <text
-                      x={mid.x}
-                      y={mid.y}
-                      fill={edgeText}
-                      fontSize="10"
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fontFamily="Inter, system-ui, sans-serif"
-                      fontWeight="500"
-                    >
-                      {parseLabel(edge.label)}
-                    </text>
-                  </g>
-                )}
                 {variant === 'flow' ? (
                   <path
                     id={`pulse-${edge.id}`}
@@ -1787,6 +1760,33 @@ export function RichDiagramCanvas({
                     filter="url(#pg-rich)"
                     opacity="0"
                   />
+                )}
+                {edge.label && mid && (
+                  <g data-edge-label="true">
+                    <rect
+                      x={mid.x - labelW / 2}
+                      y={mid.y - 12}
+                      width={labelW}
+                      height={24}
+                      rx="6"
+                      fill={edgeBg}
+                      opacity="0.96"
+                      stroke={edgeStroke}
+                      strokeWidth="1.5"
+                    />
+                    <text
+                      x={mid.x}
+                      y={mid.y}
+                      fill={edgeText}
+                      fontSize="10"
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fontFamily="Inter, system-ui, sans-serif"
+                      fontWeight="600"
+                    >
+                      {parseLabel(edge.label)}
+                    </text>
+                  </g>
                 )}
               </g>
             );

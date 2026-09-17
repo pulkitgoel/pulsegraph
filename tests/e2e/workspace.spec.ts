@@ -358,6 +358,20 @@ test('rich and classic retain moving markers clear of node boxes', async ({ page
       });
     });
     expect(overlapping, `${mode} pulse marker overlaps a node`).toBe(false);
+    const labelsAreTopmost = await page.locator('#pulsegraph-svg').evaluate((svg) =>
+      Array.from(svg.querySelectorAll<SVGGElement>('[data-edge-label="true"]')).every(
+        (label) => {
+          const pulse = label.parentElement?.querySelector<SVGElement>('[id^="pulse-"]');
+          return Boolean(
+            pulse &&
+            pulse.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING,
+          );
+        },
+      ),
+    );
+    expect(labelsAreTopmost, `${mode} edge labels should render above markers`).toBe(
+      true,
+    );
   }
 });
 
@@ -422,6 +436,24 @@ test('delivery example preserves branch semantics and clear retry lanes in every
 
   await page.getByRole('button', { name: 'Rich', exact: true }).click();
   await page.getByRole('button', { name: 'Presentation', exact: true }).click();
+  await expect(page.locator('[data-edge-label="true"] text')).toContainText([
+    'Yes',
+    'No',
+  ]);
+  const presentationLabelsAreTopmost = await page
+    .locator('#pulsegraph-svg')
+    .evaluate((svg) =>
+      Array.from(svg.querySelectorAll<SVGGElement>('[data-edge-label="true"]')).every(
+        (label) => {
+          const pulse = label.parentElement?.querySelector<SVGElement>('[id^="pulse-"]');
+          return Boolean(
+            pulse &&
+            pulse.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING,
+          );
+        },
+      ),
+    );
+  expect(presentationLabelsAreTopmost).toBe(true);
   const positions = await page.locator('#pulsegraph-svg').evaluate((svg) => {
     const box = (id: string) =>
       svg.querySelector(`#node-group-${id}`)!.getBoundingClientRect();

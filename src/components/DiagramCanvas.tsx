@@ -678,8 +678,18 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
                           : 'url(#arr)'
                   }
                 />
+                <circle
+                  id={`pulse-${edge.id}`}
+                  r="5"
+                  fill={
+                    NODE_STYLES[
+                      graph.nodes.find((node) => node.id === edge.from)?.type ?? 'service'
+                    ].dot
+                  }
+                  opacity="0"
+                />
                 {edge.label && mid && (
-                  <g>
+                  <g data-edge-label="true">
                     <rect
                       x={mid.x - labelW / 2}
                       y={mid.y - 9}
@@ -703,16 +713,6 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
                     </text>
                   </g>
                 )}
-                <circle
-                  id={`pulse-${edge.id}`}
-                  r="5"
-                  fill={
-                    NODE_STYLES[
-                      graph.nodes.find((node) => node.id === edge.from)?.type ?? 'service'
-                    ].dot
-                  }
-                  opacity="0"
-                />
               </g>
             );
           })}
