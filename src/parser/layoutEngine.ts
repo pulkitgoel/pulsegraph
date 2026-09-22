@@ -1,4 +1,9 @@
-import { repairRoutes } from '../lib/routeEdges.ts';
+import {
+  repairRoutes,
+  routeGroupBypasses,
+  separateNodePorts,
+  separateSharedSegments,
+} from '../lib/routeEdges.ts';
 import { computeLevels, findBackEdgeIds } from '../lib/graphLevels.ts';
 import { roleOf as resolveRole } from '../lib/roles.ts';
 import { presentationProfile } from '../lib/presentationProfile.ts';
@@ -153,11 +158,16 @@ export function computeLayout(graph: Graph): Graph {
     ...positionedNodes.map((node) => node.x! - (node.width || MIN_WIDTH) / 2),
   );
 
+  const sharedGroup = (from: string, to: string) =>
+    (graph.groups ?? [])
+      .filter((group) => group.members.includes(from) && group.members.includes(to))
+      .sort((a, b) => a.members.length - b.members.length)[0];
+  const groupLaneUse = new Map<string, number>();
+
   let backEdgeCount = 0;
 
   let positionedEdges: GraphEdge[] = graph.edges.map((e) => {
     if (backEdgeIds.has(e.id)) {
-      backEdgeCount++;
       const from = positionedNodes.find((n) => n.id === e.from)!;
       const to = positionedNodes.find((n) => n.id === e.to)!;
       if (!from || !to) return { ...e, points: [], isBackEdge: true };
@@ -169,6 +179,51 @@ export function computeLayout(graph: Graph): Graph {
         fy = from.y ?? 0;
       const tx = to.x ?? 0,
         ty = to.y ?? 0;
+
+      // Keep feedback inside its own subgraph. Sending a local retry around the
+      // complete canvas creates giant border routes and makes a small agent loop
+      // look like a system-wide connection.
+      const group = sharedGroup(e.from, e.to);
+      const groupBox = group ? g.node(group.id) : undefined;
+      if (group && groupBox?.width && groupBox?.height) {
+        const laneIndex = groupLaneUse.get(group.id) ?? 0;
+        groupLaneUse.set(group.id, laneIndex + 1);
+        if (isVertical) {
+          const useRight = fx >= groupBox.x;
+          const side = useRight ? 1 : -1;
+          const laneX = groupBox.x + side * (groupBox.width / 2 + 24 + laneIndex * 18);
+          const startX = fx + side * fw;
+          const endX = tx + (side * (to.width || MIN_WIDTH)) / 2;
+          return {
+            ...e,
+            isBackEdge: true,
+            points: stopBeforeTarget([
+              { x: startX, y: fy },
+              { x: laneX, y: fy },
+              { x: laneX, y: ty },
+              { x: endX, y: ty },
+            ]),
+          };
+        }
+
+        const useBottom = fy >= groupBox.y;
+        const side = useBottom ? 1 : -1;
+        const laneY = groupBox.y + side * (groupBox.height / 2 + 24 + laneIndex * 18);
+        const startY = fy + side * fh;
+        const endY = ty + (side * (to.height || NODE_HEIGHT)) / 2;
+        return {
+          ...e,
+          isBackEdge: true,
+          points: stopBeforeTarget([
+            { x: fx, y: startY },
+            { x: fx, y: laneY },
+            { x: tx, y: laneY },
+            { x: tx, y: endY },
+          ]),
+        };
+      }
+
+      backEdgeCount++;
 
       if (!isVertical) {
         const curveY = layoutMaxY + 30 + backEdgeCount * 25;
@@ -230,7 +285,16 @@ export function computeLayout(graph: Graph): Graph {
   // Dagre optimizes rank placement, but its splines can still cross unrelated
   // nodes in dense or cyclic graphs. Convert only blocked routes to verified
   // rectilinear paths before coordinates are normalized.
-  positionedEdges = repairRoutes(positionedEdges, positionedNodes);
+  positionedEdges = separateSharedSegments(
+    separateNodePorts(repairRoutes(positionedEdges, positionedNodes), positionedNodes),
+    positionedNodes,
+  );
+  positionedEdges = routeGroupBypasses(
+    positionedEdges,
+    positionedNodes,
+    positionedGroups,
+    isVertical,
+  );
 
   // Normalize coordinates so content starts at (PAD, PAD) with symmetric margins.
   // This removes dagre's leftover asymmetric margins and prevents back-edge curves
@@ -321,7 +385,9 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
   const profile = presentationProfile(graph);
   const BOX_W = 180,
     BOX_H = 92,
-    GAP_X = 40,
+    // A short decision tag is about 36px wide. Keep enough corridor for that
+    // pill, the arrowhead and clear space on both sides of adjacent boxes.
+    GAP_X = 84,
     MARGIN = 64;
   const colStep = BOX_W + GAP_X;
 
@@ -625,6 +691,30 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
     // dedicated lane below every node and semantic zone so they never share
     // a branch corridor or run above step badges.
     if (backEdgeIds.has(e.id)) {
+      const containingGroup = (graph.groups ?? [])
+        .filter((group) => group.members.includes(e.from) && group.members.includes(e.to))
+        .sort((a, b) => a.members.length - b.members.length)[0];
+      if (containingGroup) {
+        const members = containingGroup.members
+          .map((id) => byId.get(id))
+          .filter((node): node is GraphNode => Boolean(node));
+        const groupRight = Math.max(...members.map((node) => node.x! + BOX_W / 2));
+        const groupBottom = Math.max(...members.map((node) => node.y! + BOX_H / 2));
+        const laneX = groupRight + 28;
+        const laneY = groupBottom + 28;
+        return {
+          ...e,
+          isBackEdge: true,
+          points: stopBeforeTarget([
+            { x: fx, y: fy + BOX_H / 2 },
+            { x: fx, y: laneY },
+            { x: laneX, y: laneY },
+            { x: laneX, y: ty },
+            { x: tx + BOX_W / 2, y: ty },
+          ]),
+        };
+      }
+
       const baseLane = Math.max(...boxes.map((box) => box.y1));
       const key = Math.round(baseLane);
       const laneIndex = laneUse.get(key) || 0;
@@ -747,7 +837,10 @@ export function roleBlueprintLayout(graph: Graph, roles: Record<string, string>)
     return { ...e, points: pts };
   });
 
-  edges = repairRoutes(edges, nodes);
+  edges = separateSharedSegments(
+    separateNodePorts(repairRoutes(edges, nodes), nodes),
+    nodes,
+  );
 
   // Use vocabulary inferred from the diagram instead of architecture-specific labels.
   const zoneDefs = [

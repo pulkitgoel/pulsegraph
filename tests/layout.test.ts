@@ -12,6 +12,9 @@ import { computeLayout, roleBlueprintLayout } from '../src/parser/layoutEngine.t
 import { buildBlueprintSvg } from '../src/render/blueprintSvg.ts';
 import { computeLevels, maxLevel } from '../src/lib/graphLevels.ts';
 import { labelAnchor } from '../src/lib/edgeLabel.ts';
+import { DIAGRAM_EXAMPLES } from '../src/lib/examples.ts';
+import { routeCrossesNode } from '../src/lib/routeEdges.ts';
+import { RESEARCH_FLOW } from './fixtures/researchFlow.ts';
 
 const SRC = `flowchart TD
     User([User])
@@ -54,6 +57,127 @@ const SRC = `flowchart TD
     User --> POLL
     RES --> POLL
     POLL --> User`;
+
+function maxSharedAxisLength(graph: ReturnType<typeof computeLayout>) {
+  const segments = graph.edges.flatMap((edge) =>
+    (edge.points ?? []).slice(0, -1).map((point, index) => ({
+      edge: edge.id,
+      a: point,
+      b: edge.points![index + 1],
+    })),
+  );
+  let longest = 0;
+  for (let i = 0; i < segments.length; i++) {
+    for (let j = i + 1; j < segments.length; j++) {
+      if (segments[i].edge === segments[j].edge) continue;
+      const a = segments[i];
+      const b = segments[j];
+      if (
+        Math.abs(a.a.x - a.b.x) < 0.5 &&
+        Math.abs(b.a.x - b.b.x) < 0.5 &&
+        Math.abs(a.a.x - b.a.x) < 0.5
+      ) {
+        longest = Math.max(
+          longest,
+          Math.min(Math.max(a.a.y, a.b.y), Math.max(b.a.y, b.b.y)) -
+            Math.max(Math.min(a.a.y, a.b.y), Math.min(b.a.y, b.b.y)),
+        );
+      }
+      if (
+        Math.abs(a.a.y - a.b.y) < 0.5 &&
+        Math.abs(b.a.y - b.b.y) < 0.5 &&
+        Math.abs(a.a.y - b.a.y) < 0.5
+      ) {
+        longest = Math.max(
+          longest,
+          Math.min(Math.max(a.a.x, a.b.x), Math.max(b.a.x, b.b.x)) -
+            Math.max(Math.min(a.a.x, a.b.x), Math.min(b.a.x, b.b.x)),
+        );
+      }
+    }
+  }
+  return longest;
+}
+
+function countTJunctions(graph: ReturnType<typeof computeLayout>) {
+  const segments = graph.edges.flatMap((edge) =>
+    (edge.points ?? []).slice(0, -1).map((point, index) => ({
+      edge: edge.id,
+      a: point,
+      b: edge.points![index + 1],
+    })),
+  );
+  const onInterior = (
+    point: { x: number; y: number },
+    segment: (typeof segments)[number],
+  ) => {
+    const dx = segment.b.x - segment.a.x;
+    const dy = segment.b.y - segment.a.y;
+    const cross = (point.x - segment.a.x) * dy - (point.y - segment.a.y) * dx;
+    if (Math.abs(cross) > 0.5) return false;
+    const dot = (point.x - segment.a.x) * dx + (point.y - segment.a.y) * dy;
+    const squared = dx * dx + dy * dy;
+    return dot > 0.5 && dot < squared - 0.5;
+  };
+  let count = 0;
+  for (let i = 0; i < segments.length; i++) {
+    for (let j = i + 1; j < segments.length; j++) {
+      if (segments[i].edge === segments[j].edge) continue;
+      if (
+        onInterior(segments[i].a, segments[j]) ||
+        onInterior(segments[i].b, segments[j]) ||
+        onInterior(segments[j].a, segments[i]) ||
+        onInterior(segments[j].b, segments[i])
+      )
+        count++;
+    }
+  }
+  return count;
+}
+
+test('research flow keeps its agent retry local to the subgraph', () => {
+  const graph = computeLayout(parseMermaid(RESEARCH_FLOW));
+  const retry = graph.edges.find((edge) => edge.from === 'A4' && edge.to === 'A1');
+  const group = graph.groups?.find((candidate) => candidate.members.includes('A1'));
+  assert.ok(retry?.points?.length);
+  assert.ok(group?.width);
+  const xs = retry.points.map((point) => point.x);
+  assert.ok(Math.max(...xs) - Math.min(...xs) < group.width);
+  assert.equal(routeCrossesNode(retry, graph.nodes), false);
+  assert.equal(graph.edges.length, 24);
+  assert.ok(maxSharedAxisLength(graph) <= 0.5);
+  assert.equal(countTJunctions(graph), 0);
+  const gatewayEntry = graph.edges.find(
+    (edge) => edge.from === 'A4' && edge.to === 'TZ',
+  )!.points!;
+  const end = gatewayEntry.at(-1)!,
+    bend = gatewayEntry.at(-2)!;
+  assert.ok(
+    Math.hypot(end.x - bend.x, end.y - bend.y) >= 32,
+    'gateway arrow needs a straight approach after its last bend',
+  );
+});
+
+test('research presentation keeps the agent retry above the service band', () => {
+  const roles = Object.fromEntries([
+    ['User', 'lead-in'],
+    ...['API', 'SEC', 'Q', 'W', 'A1', 'A2', 'A3', 'A4', 'GO'].map((id) => [
+      id,
+      'pipeline',
+    ]),
+    ...['C', 'L', 'TZ', 'S'].map((id) => [id, 'service']),
+    ...['RES', 'POLL'].map((id) => [id, 'output']),
+  ] as [string, string][]);
+  const graph = roleBlueprintLayout(parseMermaid(RESEARCH_FLOW), roles);
+  const retry = graph.edges.find((edge) => edge.from === 'A4' && edge.to === 'A1')!;
+  const serviceY = Math.min(
+    ...graph.nodes.filter((node) => roles[node.id] === 'service').map((node) => node.y!),
+  );
+  assert.ok(Math.max(...retry.points!.map((point) => point.y)) < serviceY);
+  assert.equal(routeCrossesNode(retry, graph.nodes), false);
+  assert.ok(maxSharedAxisLength(graph) <= 0.5);
+  assert.equal(countTJunctions(graph), 0);
+});
 
 const ROLES: Record<string, string> = {
   User: 'lead-in',
@@ -99,6 +223,39 @@ test('role layout: no two node boxes overlap', () => {
       const hit = a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
       assert.equal(hit, false, `${a.id} overlaps ${b.id}`);
     }
+});
+
+test('presentation leaves a clear connector corridor between adjacent IT workflow boxes', () => {
+  const source = DIAGRAM_EXAMPLES.find(
+    (example) => example.name === 'Secure CI/CD pipeline',
+  )!.source;
+  const laid = roleBlueprintLayout(parseMermaid(source), {
+    A: 'lead-in',
+    B: 'pipeline',
+    C: 'pipeline',
+    D: 'pipeline',
+    E: 'pipeline',
+    F: 'pipeline',
+    G: 'pipeline',
+    H: 'pipeline',
+    I: 'pipeline',
+    J: 'output',
+  });
+  const rows = new Map<number, typeof laid.nodes>();
+  for (const node of laid.nodes) {
+    const row = rows.get(node.y!) ?? [];
+    row.push(node);
+    rows.set(node.y!, row);
+  }
+  for (const row of rows.values()) {
+    row.sort((a, b) => a.x! - b.x!);
+    for (let index = 1; index < row.length; index++) {
+      const left = row[index - 1];
+      const right = row[index];
+      const gap = right.x! - right.width / 2 - (left.x! + left.width / 2);
+      assert.ok(gap >= 80, `${left.id}->${right.id} has only ${gap}px of arrow space`);
+    }
+  }
 });
 
 test('role layout: no edge segment passes through another node box', () => {

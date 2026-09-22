@@ -8,18 +8,34 @@ GSAP. Use it to explain architecture, request flows, decisions, and delivery pip
 Start with an example or paste Mermaid—no account or API key required.
 Connect DeepSeek or local Ollama when you want to describe changes in plain English.
 
-![PulseGraph workspace](docs/workspace.png)
+![PulseGraph Rich-mode flow exported by PulseGraph](public/pulsegraph-live-flow.gif)
 
 ## Features
 
-- Responsive landing page with an animated flow preview, working examples, and light/dark themes.
-- Classic, Rich, and Flow SVG styles with animated markers, varied icons, and rounded connectors.
+- Responsive landing page with a real Rich-mode GIF exported by PulseGraph, working examples, and light/dark themes.
+- Classic and Rich SVG styles with moving dots; Flow style with moving segments and rounded connectors. All three preserve directed arrowheads.
 - Direct Mermaid editing, mouse/touch pan, keyboard zoom, and Play/Pause.
 - Local draft recovery, 20-step undo/redo, source import, editable JSON import/export.
 - AI generation and refinement with cancellable requests and validated responses.
 - Presentation assigns semantic roles, adapts labels and geometry to the flow, and
   retains every original node, label and edge.
 - PNG, GIF, SVG, Mermaid, editable JSON, and presentation Slide PNG exports.
+
+### Live canvas behavior
+
+- Edge markers share a constant travel speed. Short connectors rest briefly after
+  arrival instead of racing through repeated loops.
+- A destination box flashes when an incoming marker arrives, rather than glowing
+  on an unrelated timer. Reduced-motion preferences disable the live animation.
+- Edge labels are drawn above connectors and markers so moving content does not
+  obscure the label text.
+- Routing separates coincident orthogonal segments and node entry ports. Local
+  subgraph retries and right-side shortcuts around a top-down subgraph use
+  separate lanes, with room for the final arrow approach where a clear route exists.
+
+These behaviors are checked on the browser canvas, not only on exported files.
+Dense graphs can still need simplification; this is not a guarantee of a
+crossing-free layout for every graph.
 
 ## Run locally
 
@@ -85,19 +101,21 @@ flows instead of assuming every diagram is client/backend architecture. Slide PN
 remains disabled until roles exist. Source edits clear the roles; choose Presentation
 again for the new diagram.
 
-| Format            | Output                                                       |
-| ----------------- | ------------------------------------------------------------ |
-| PNG               | Settled diagram, up to 2,560 px on the long edge             |
-| GIF               | Three-second moving-flow-marker loop, 15 fps, up to 2,560 px |
-| Slide PNG         | Separate light-theme renderer; same frame-size choices       |
-| SVG               | Settled vector diagram                                       |
-| Mermaid source    | Portable .mmd source                                         |
-| Editable document | Versioned JSON with source and presentation roles            |
+| Format            | Output                                                 |
+| ----------------- | ------------------------------------------------------ |
+| PNG               | Settled diagram, up to 2,560 px on the long edge       |
+| GIF               | 45-frame marker loop (~3.15 seconds), up to 2,560 px   |
+| Slide PNG         | Separate light-theme renderer; same frame-size choices |
+| SVG               | Settled vector diagram                                 |
+| Mermaid source    | Portable .mmd source                                   |
+| Editable document | Versioned JSON with source and presentation roles      |
 
 Raster frames: content fit, 16:9, 16:10, 4:3, square, A4 landscape and portrait.
 GIF encoding runs in a worker, one transferred frame at a time. Exports use an
-isolated snapshot and never seek the live GSAP timeline. GIFs animate flow
-markers; they do not reproduce every live icon animation.
+isolated snapshot and never seek the live GSAP timeline. GIFs use the same marker
+travel timing as the canvas, but do not include live icon animations or
+arrival-triggered box glows. Long connectors may not complete a traversal within
+the short GIF loop.
 
 ## Supported Mermaid subset
 
@@ -111,6 +129,7 @@ Use `<br/>` inside a label for a line break.
 | Shape                       | Node treatment |
 | --------------------------- | -------------- |
 | A((User))                   | User           |
+| A([User])                   | User (stadium) |
 | A(Client)                   | Client         |
 | A[Service]                  | Service        |
 | A[(Database)]               | Database       |
@@ -170,10 +189,39 @@ unit tests, dependency audit, and Chromium end-to-end tests. Automated provider
 tests are mocked and never require a real key; live providers need a separate
 smoke test.
 
-Regressions cover parsing, malformed AI output, graph preservation, document
-round trips, framing limits, cycles, self-loops and a 100-graph routing corpus.
-Browser tests cover editing, recovery, real exports, cancellation, mobile layout
-and reduced motion.
+Regressions cover parsing (including stadium labels), malformed AI output, graph
+preservation, document round trips, framing limits, cycles, self-loops and a
+100-graph routing corpus. Browser tests cover editing, recovery, real exports,
+cancellation, mobile layout and reduced motion.
+
+The [research-flow fixture](tests/fixtures/researchFlow.ts) exercises a multi-agent
+pipeline with cache shortcuts, retries, gateway fan-in and polling. Its
+[live-canvas tests](tests/e2e/research-canvas.spec.ts) check all 24 arrowheads across
+Classic, Rich, Flow and Presentation, visible edge labels, spacing between the
+right-side routes, and marker-arrival glow timing in Classic and Rich.
+
+### Refresh the landing preview
+
+The landing GIF is generated through the application's actual **Production API
+architecture → Rich → Export** workflow, not a separate hand-drawn animation.
+
+Start a local production preview:
+
+    npm run build
+    npm run preview -- --host 127.0.0.1 --port 4173
+
+In a second terminal:
+
+    npm run export:landing-gif
+
+This replaces `public/pulsegraph-live-flow.gif` and its static PNG fallback.
+Rebuild afterward to include the refreshed assets in `dist`.
+The script uses installed Chrome/Edge on Windows when available, otherwise
+Playwright Chromium. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to use another browser
+executable. To capture a different local server in PowerShell:
+
+    $env:PULSEGRAPH_URL="http://127.0.0.1:5173"
+    npm run export:landing-gif
 
 ### Local architecture graph
 
@@ -204,5 +252,7 @@ code changes; the code-only update is local and does not require an API key.
         exportGeometry.ts       Shared frame geometry
       lib/                      Documents, roles, routing and viewport utilities
     tests/                      Unit regressions and Playwright workflows
+    scripts/export-landing-flow.mjs  Capture the real Rich-mode landing preview
+    public/                     Landing GIF and static fallback
 
 [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT License](LICENSE)

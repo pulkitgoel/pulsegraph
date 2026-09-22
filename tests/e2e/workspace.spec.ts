@@ -1,6 +1,58 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readFile, writeFile } from 'node:fs/promises';
 import { BENEFIT_FLOW } from '../fixtures/benefitFlow';
+import { DIAGRAM_EXAMPLES } from '../../src/lib/examples';
+
+test('Secure CI/CD presentation keeps visible corridors between boxes', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  const source = DIAGRAM_EXAMPLES.find(
+    (example) => example.name === 'Secure CI/CD pipeline',
+  )!.source;
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'secure-ci-cd.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(
+      JSON.stringify({
+        version: 1,
+        source,
+        roles: {
+          A: 'lead-in',
+          B: 'pipeline',
+          C: 'pipeline',
+          D: 'pipeline',
+          E: 'pipeline',
+          F: 'pipeline',
+          G: 'pipeline',
+          H: 'pipeline',
+          I: 'pipeline',
+          J: 'output',
+        },
+      }),
+    ),
+  });
+  const presentationButton = page.getByRole('button', {
+    name: 'Presentation',
+    exact: true,
+  });
+  await presentationButton.click();
+  await expect(presentationButton).toHaveAttribute('aria-pressed', 'true');
+  const connectorLengths = await page
+    .locator('[id^="path-"]')
+    .evaluateAll((paths) =>
+      paths.map((path) => (path as SVGPathElement).getTotalLength()),
+    );
+  expect(Math.min(...connectorLengths)).toBeGreaterThanOrEqual(80);
+  await expect(page.locator('[data-edge-label="true"] text')).toContainText([
+    'No',
+    'Yes',
+    'No',
+    'Yes',
+  ]);
+  await page.screenshot({ path: 'test-results/secure-ci-cd-presentation-spacing.png' });
+});
 
 test('Classic benefit flow exports neutral retry connectors with separate arrow entries', async ({
   page,
@@ -342,8 +394,8 @@ test('rich and classic retain moving markers clear of node boxes', async ({ page
       .poll(() => firstPulse.getAttribute('transform'))
       .not.toBe(initialTransform);
     const overlapping = await page.locator('#pulsegraph-svg').evaluate((svg) => {
-      const boxes = Array.from(svg.querySelectorAll('[id^="node-group-"]')).map((node) =>
-        node.getBoundingClientRect(),
+      const boxes = Array.from(svg.querySelectorAll('[data-node-body="true"]')).map(
+        (node) => node.getBoundingClientRect(),
       );
       return Array.from(svg.querySelectorAll('[id^="pulse-"]')).some((pulse) => {
         if (getComputedStyle(pulse).opacity === '0') return false;
@@ -490,7 +542,7 @@ test('Flow appearance uses rounded connectors, flowing segments and varied icons
     'data-visual-style',
     'flow',
   );
-  await expect(page.locator('.flow-segment')).toHaveCount(5);
+  await expect(page.locator('.flow-segment')).toHaveCount(8);
   expect(
     await page
       .locator('[id^="path-"]')
@@ -623,7 +675,10 @@ test('chat refinement applies the latest instruction to the current diagram', as
   await expect(page.locator('#node-group-REDIS')).toBeVisible();
   expect(refinement?.operation).toBe('refine');
   expect(refinement?.instruction).toBe('Add Redis before PostgreSQL');
-  expect(refinement?.currentDiagram).toContain('API Gateway');
+  expect(refinement?.currentDiagram).toBe(
+    DIAGRAM_EXAMPLES.find((example) => example.name === 'Production API architecture')!
+      .source,
+  );
 });
 
 test('AI presentation preserves topology, enables slide export, and does not persist keys', async ({
@@ -642,11 +697,14 @@ test('AI presentation preserves topology, enables slide export, and does not per
               content: JSON.stringify({
                 roles: {
                   U: 'lead-in',
+                  CDN: 'pipeline',
+                  WAF: 'pipeline',
+                  LB: 'pipeline',
                   API: 'pipeline',
                   AUTH: 'service',
-                  S: 'pipeline',
                   DB: 'service',
                   CACHE: 'service',
+                  OBS: 'output',
                 },
                 mermaidCode: 'flowchart LR; BAD[Replacement]',
               }),
@@ -664,9 +722,12 @@ test('AI presentation preserves topology, enables slide export, and does not per
   await page.getByLabel('DeepSeek API key').fill('test-key-not-real');
   await page.getByRole('button', { name: 'Save AI settings' }).click();
   await expect(page.getByRole('log')).toContainText('All original nodes');
-  const presentationPosition = await page
-    .locator('#node-group-API')
-    .getAttribute('transform');
+  const apiPosition = () =>
+    page.locator('#node-group-API [data-node-body]').evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      return { x: box.x, y: box.y };
+    });
+  const presentationPosition = await apiPosition();
   await expect(
     page.getByRole('button', { name: 'Presentation', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true');
@@ -674,9 +735,7 @@ test('AI presentation preserves topology, enables slide export, and does not per
   await expect(
     page.getByRole('button', { name: 'Classic', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true');
-  await expect
-    .poll(() => page.locator('#node-group-API').getAttribute('transform'))
-    .not.toBe(presentationPosition);
+  await expect.poll(apiPosition).not.toEqual(presentationPosition);
   await page.getByRole('button', { name: 'Presentation', exact: true }).click();
   expect(presentationRequests).toBe(1);
   await expect(page.locator('#node-group-API')).toBeVisible();
@@ -740,7 +799,10 @@ test('PNG, SVG, GIF and document exports produce real files with requested frami
   await writeFile('test-results/export.gif', gif);
   const document = JSON.parse((await exportFile(page, 'Editable document')).toString());
   expect(document.version).toBe(1);
-  expect(document.source).toContain('API Gateway');
+  expect(document.source).toBe(
+    DIAGRAM_EXAMPLES.find((example) => example.name === 'Production API architecture')!
+      .source,
+  );
 });
 
 test('provider failure is recoverable and cancellation unlocks the editor', async ({

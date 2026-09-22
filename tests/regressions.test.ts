@@ -6,7 +6,15 @@ import { buildBlueprintSvg } from '../src/render/blueprintSvg.ts';
 import { sanitizeAnimationCss } from '../src/lib/sanitizeCss.ts';
 import { presentationProfile } from '../src/lib/presentationProfile.ts';
 import { pointsToRoundedPath } from '../src/lib/svgPath.ts';
-import { pulseTravelDistance, pulseTravelWindow } from '../src/lib/pulseTravel.ts';
+import {
+  PULSE_MIN_DURATION_SECONDS,
+  PULSE_TRAVEL_SPEED,
+  pulseRepeatDelay,
+  pulseTravelDistance,
+  pulseTravelDistanceAtTime,
+  pulseTravelDuration,
+  pulseTravelWindow,
+} from '../src/lib/pulseTravel.ts';
 
 test('flow paths round routed vertices without moving their endpoints', () => {
   const path = pointsToRoundedPath([
@@ -20,10 +28,34 @@ test('flow paths round routed vertices without moving their endpoints', () => {
 test('animated edge markers stay inside the connector corridor', () => {
   const window = pulseTravelWindow(200);
   assert.equal(window.start, 0.12);
-  assert.equal(window.end, 0.88);
+  assert.equal(window.end, 0.96);
   assert.equal(window.inset, 24);
   assert.equal(pulseTravelDistance(200, 0), 24);
-  assert.equal(pulseTravelDistance(200, 1), 176);
+  assert.equal(pulseTravelDistance(200, 1), 192);
+  assert.ok(Math.abs(60 * (1 - pulseTravelWindow(60).end) - 8) < 1e-9);
+});
+
+test('animated edge markers move at the same speed and short links rest after arrival', () => {
+  const elapsed = 0.25;
+  for (const length of [100, 240, 900]) {
+    const window = pulseTravelWindow(length);
+    const span = length * (window.end - window.start);
+    const duration = pulseTravelDuration(length);
+    const distance = pulseTravelDistanceAtTime(length, elapsed);
+    assert.ok(duration + pulseRepeatDelay(length) >= PULSE_MIN_DURATION_SECONDS);
+    assert.ok(Math.abs(span / duration - PULSE_TRAVEL_SPEED) < 1e-9);
+    assert.ok(Math.abs(distance - window.inset - (span * elapsed) / duration) < 1e-9);
+  }
+  const length = 100;
+  const arrival = pulseTravelDuration(length);
+  assert.equal(
+    pulseTravelDistanceAtTime(length, arrival + 0.1),
+    pulseTravelDistance(length, 1),
+  );
+  assert.equal(
+    pulseTravelDistanceAtTime(length, PULSE_MIN_DURATION_SECONDS),
+    pulseTravelWindow(length).inset,
+  );
 });
 
 test('operators and semicolons inside quoted node labels remain text', () => {

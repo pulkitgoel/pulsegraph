@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "export:landing-gif": "node scripts/export-landing-flow.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "tsx --test tests/parser.test.ts tests/layout.test.ts tests/llm.test.ts tests/regressions.test.ts",

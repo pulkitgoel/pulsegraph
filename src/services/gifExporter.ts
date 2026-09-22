@@ -1,8 +1,9 @@
 import { exportGeometry, type ExportFrame } from './exportGeometry';
-import { pulseTravelDistance, pulseTravelWindow } from '../lib/pulseTravel';
+import { pulseTravelDistanceAtTime, pulseTravelWindow } from '../lib/pulseTravel';
 export type { ExportFrame } from './exportGeometry';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const GIF_FRAME_DELAY_MS = 70;
 type Progress = (percent: number) => void;
 
 function safePathLength(path: SVGPathElement | null): number {
@@ -39,6 +40,8 @@ function snapshot(element: Element): SVGSVGElement {
     if (node.classList.contains('node-group')) node.removeAttribute('transform');
   });
   clone.querySelectorAll<SVGPathElement>('[id^="path-"]').forEach((path) => {
+    const savedMarker = path.getAttribute('data-marker-end');
+    if (savedMarker) path.setAttribute('marker-end', savedMarker);
     path.style.strokeDasharray =
       path.getAttribute('data-dashed') === 'true' ? '6 6' : 'none';
     path.style.strokeDashoffset = '0';
@@ -252,22 +255,24 @@ export async function exportGif(
   try {
     for (let index = 0; index < frameCount; index++) {
       signal?.throwIfAborted();
+      const elapsedSeconds = (index * GIF_FRAME_DELAY_MS) / 1000;
+      const fadeFrames = 3;
+      const loopOpacity = Math.min(
+        1,
+        index / fadeFrames,
+        (frameCount - 1 - index) / fadeFrames,
+      );
       flows.forEach((flow) => {
+        const distance = pulseTravelDistanceAtTime(flow.length, elapsedSeconds);
         if (flow.kind === 'segment') {
-          flow.segment.setAttribute(
-            'stroke-dashoffset',
-            String(
-              flow.startOffset +
-                ((flow.endOffset - flow.startOffset) * index) / frameCount,
-            ),
-          );
+          flow.segment.setAttribute('stroke-dashoffset', String(-distance));
+          flow.segment.setAttribute('opacity', String(loopOpacity));
           return;
         }
-        const point = flow.path.getPointAtLength(
-          pulseTravelDistance(flow.length, index / frameCount),
-        );
+        const point = flow.path.getPointAtLength(distance);
         flow.circle.setAttribute('cx', String(point.x));
         flow.circle.setAttribute('cy', String(point.y));
+        flow.circle.setAttribute('opacity', String(loopOpacity));
       });
       const canvas = await rasterize(
         root,
@@ -279,7 +284,13 @@ export async function exportGif(
       const pixels = canvas.getContext('2d')!.getImageData(0, 0, width, height).data;
       await sendFrame(
         worker,
-        { type: 'frame', pixels: pixels.buffer, width, height, delay: 70 },
+        {
+          type: 'frame',
+          pixels: pixels.buffer,
+          width,
+          height,
+          delay: GIF_FRAME_DELAY_MS,
+        },
         [pixels.buffer],
         signal,
       );

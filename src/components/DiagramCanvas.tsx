@@ -1,5 +1,9 @@
 import { scopedAnimations } from '../lib/animations';
-import { pulseTravelWindow } from '../lib/pulseTravel';
+import {
+  pulseRepeatDelay,
+  pulseTravelDuration,
+  pulseTravelWindow,
+} from '../lib/pulseTravel';
 import { pointsToPath } from '../lib/svgPath';
 import { useCanvasViewport } from '../lib/useCanvasViewport';
 import { useEffect, useRef, useMemo } from 'react';
@@ -257,6 +261,24 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
     if (reducedMotion) return;
     ctxRef.current = gsap.context((context) => {
       const animate = scopedAnimations(svgRef.current);
+      const maxLevel = Math.max(1, ...nodeLevels.values());
+      const revealDelay = (level: number) => (Math.max(0, level) / maxLevel) * 0.7;
+      const edgeRevealDuration = 0.45;
+      const flashArrival = (nodeId: string) => {
+        const glowEl = svgRef.current?.getElementById(`glow-${nodeId}`);
+        if (!glowEl) return;
+        gsap.fromTo(
+          glowEl,
+          { opacity: 0.75, scale: 1.05, transformOrigin: 'center' },
+          {
+            opacity: 0,
+            scale: 1,
+            duration: 0.55,
+            ease: 'power2.out',
+            overwrite: 'auto',
+          },
+        );
+      };
       // 1. Animate Subgraph Groups (levels come from the shared memo above)
       (graph.groups || []).forEach((grp) => {
         const grpEl = svgRef.current?.getElementById(`group-${grp.id}`);
@@ -270,7 +292,7 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
           gsap.fromTo(
             grpEl,
             { opacity: 0 },
-            { opacity: 1, duration: 0.8, delay: minLevel * 0.6 },
+            { opacity: 1, duration: 0.45, delay: revealDelay(minLevel) },
           );
         }
       });
@@ -286,8 +308,8 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
             {
               opacity: 1,
               scale: 1,
-              duration: 0.6,
-              delay: level * 0.6,
+              duration: 0.45,
+              delay: revealDelay(level),
               ease: 'back.out(1.5)',
               clearProps: 'transform',
             },
@@ -296,7 +318,7 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
       });
 
       // 4. Animate Edges
-      graph.edges.forEach((edge, index) => {
+      graph.edges.forEach((edge) => {
         const pathEl = svgRef.current?.getElementById(
           `path-${edge.id}`,
         ) as SVGPathElement | null;
@@ -316,14 +338,14 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
         // Do not let an edge or its pulse arrive while either endpoint is
         // still entering. This prevents markers from appearing to overlap
         // boxes during the staggered reveal, especially on branches/loops.
-        const edgeDelay = Math.max(srcLevel, targetLevel) * 0.6 + 0.7;
+        const edgeDelay = revealDelay(Math.max(srcLevel, targetLevel)) + 0.45;
 
         if (!edge.isBackEdge) {
           const length = pathEl.getTotalLength();
           gsap.set(pathEl, { strokeDasharray: length, strokeDashoffset: length });
           gsap.to(pathEl, {
             strokeDashoffset: 0,
-            duration: 1.2,
+            duration: edgeRevealDuration,
             delay: edgeDelay,
             ease: 'power2.out',
             onComplete: () => {
@@ -344,7 +366,7 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
           gsap.set(pathEl, { opacity: 0 });
           gsap.to(pathEl, {
             opacity: 1,
-            duration: 1.2,
+            duration: edgeRevealDuration,
             delay: edgeDelay,
             ease: 'power2.out',
             onComplete: () => {
@@ -367,21 +389,26 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
           gsap.to(pulse, {
             opacity: 1,
             duration: 0.2,
-            delay: edgeDelay + 1.2,
+            delay: edgeDelay + edgeRevealDuration,
           });
-          gsap.to(pulse, {
-            duration: 1.5 + (index % 5) * 0.28,
-            repeat: -1,
-            ease: 'none',
-            delay: edgeDelay + 1.2,
-            motionPath: {
-              path: pathEl,
-              align: pathEl,
-              alignOrigin: [0.5, 0.5],
-              start: travel.start,
-              end: travel.end,
-            },
-          });
+          gsap
+            .timeline({
+              repeat: -1,
+              repeatDelay: pulseRepeatDelay(pathEl.getTotalLength()),
+              delay: edgeDelay + edgeRevealDuration,
+            })
+            .to(pulse, {
+              duration: pulseTravelDuration(pathEl.getTotalLength()),
+              ease: 'none',
+              motionPath: {
+                path: pathEl,
+                align: pathEl,
+                alignOrigin: [0.5, 0.5],
+                start: travel.start,
+                end: travel.end,
+              },
+              onComplete: () => context.add(() => flashArrival(edge.to)),
+            });
         }
       });
 
@@ -650,72 +677,80 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
           })}
 
           {/* ── Edges ── */}
-          {graph.edges.map((edge) => {
-            const d = pointsToPath(edge.points ?? []);
-            if (!d) return null;
-            // Anchor labels near the SOURCE on routed arcs (see lib/edgeLabel).
-            const mid = labelAnchor(edge.points);
-            const labelW = edge.label
-              ? Math.min(140, Math.max(34, edge.label.length * 5.8 + 14))
-              : 0;
-            return (
-              <g key={edge.id}>
-                <path
-                  id={`path-${edge.id}`}
-                  d={d}
-                  data-dashed={edge.dashed || false}
-                  fill="none"
-                  stroke={isLight ? '#CBD5E1' : '#1E293B'}
-                  strokeWidth={edge.thick ? 4 : 2}
-                  strokeDasharray={edge.dashed ? '6 6' : undefined}
-                  markerEnd={
-                    edge.arrow === 'none'
-                      ? undefined
-                      : edge.arrow === 'cross'
-                        ? 'url(#edge-cross)'
-                        : edge.arrow === 'circle'
-                          ? 'url(#edge-circle)'
-                          : 'url(#arr)'
-                  }
-                />
-                <circle
-                  id={`pulse-${edge.id}`}
-                  r="5"
-                  fill={
-                    NODE_STYLES[
-                      graph.nodes.find((node) => node.id === edge.from)?.type ?? 'service'
-                    ].dot
-                  }
-                  opacity="0"
-                />
-                {edge.label && mid && (
-                  <g data-edge-label="true">
-                    <rect
-                      x={mid.x - labelW / 2}
-                      y={mid.y - 9}
-                      width={labelW}
-                      height={16}
-                      rx="3"
-                      fill={isLight ? '#FFFFFF' : '#090B10'}
-                      opacity={isLight ? '1' : '0.8'}
-                      stroke={isLight ? '#E2E8F0' : 'none'}
-                    />
-                    <text
-                      x={mid.x}
-                      y={mid.y}
-                      fill={isLight ? '#475569' : '#94A3B8'}
-                      fontSize="9.5"
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fontFamily="Inter, system-ui, sans-serif"
-                    >
-                      {parseLabel(edge.label)}
-                    </text>
-                  </g>
-                )}
-              </g>
-            );
-          })}
+          <g data-edge-layer="true">
+            {graph.edges.map((edge) => {
+              const d = pointsToPath(edge.points ?? []);
+              if (!d) return null;
+              return (
+                <g key={`line-${edge.id}-${d}`}>
+                  <path
+                    id={`path-${edge.id}`}
+                    d={d}
+                    data-dashed={edge.dashed || false}
+                    fill="none"
+                    stroke={isLight ? '#CBD5E1' : '#1E293B'}
+                    strokeWidth={edge.thick ? 4 : 2}
+                    strokeDasharray={edge.dashed ? '6 6' : undefined}
+                    markerEnd={
+                      edge.arrow === 'none'
+                        ? undefined
+                        : edge.arrow === 'cross'
+                          ? 'url(#edge-cross)'
+                          : edge.arrow === 'circle'
+                            ? 'url(#edge-circle)'
+                            : 'url(#arr)'
+                    }
+                  />
+                  <circle
+                    id={`pulse-${edge.id}`}
+                    r="5"
+                    fill={
+                      NODE_STYLES[
+                        graph.nodes.find((node) => node.id === edge.from)?.type ??
+                          'service'
+                      ].dot
+                    }
+                    opacity="0"
+                  />
+                </g>
+              );
+            })}
+
+            {/* Labels are one global overlay. A later connector can no longer
+                paint over the text of an earlier edge on the live canvas. */}
+            {graph.edges.map((edge) => {
+              if (!edge.label) return null;
+              const mid = labelAnchor(edge.points);
+              if (!mid) return null;
+              const labelW = Math.min(140, Math.max(34, edge.label.length * 5.8 + 14));
+              return (
+                <g key={`label-${edge.id}`} data-edge-label="true">
+                  <rect
+                    x={mid.x - labelW / 2}
+                    y={mid.y - 9}
+                    width={labelW}
+                    height={16}
+                    rx="3"
+                    fill={isLight ? '#FFFFFF' : '#090B10'}
+                    opacity={isLight ? '1' : '0.92'}
+                    stroke={isLight ? '#E2E8F0' : '#1E293B'}
+                  />
+                  <text
+                    x={mid.x}
+                    y={mid.y}
+                    fill={isLight ? '#475569' : '#CBD5E1'}
+                    fontSize="9.5"
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontFamily="Inter, system-ui, sans-serif"
+                    fontWeight="600"
+                  >
+                    {parseLabel(edge.label)}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
 
           {/* ── Nodes ── */}
           {graph.nodes.map((node) => {
@@ -753,10 +788,11 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
                     height={h + 6}
                     rx="11"
                     fill={st.border}
-                    opacity="0.07"
+                    opacity="0"
                   />
                   {/* Main box */}
                   <rect
+                    data-node-body="true"
                     width={w}
                     height={h}
                     rx="8"

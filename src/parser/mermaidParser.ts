@@ -124,9 +124,14 @@ function parseNodeToken(
     }
     const rawId = m[1].trim();
     const open = m[2];
-    const label = unquote(m[3]);
     const close = m[4];
-    const type = shapeToType(open, close);
+    const rawLabel = unquote(m[3]);
+    // Mermaid stadium syntax is `([label])`. The outer parentheses are the
+    // shape and the inner brackets are delimiters, not visible label text.
+    const isStadium =
+      open === '(' && close === ')' && rawLabel.startsWith('[') && rawLabel.endsWith(']');
+    const label = isStadium ? unquote(rawLabel.slice(1, -1)) : rawLabel;
+    const type = isStadium ? 'user' : shapeToType(open, close);
     if (!nodeMap.has(rawId)) {
       nodeMap.set(rawId, { id: rawId, label: label || rawId, type, width: 0, height: 0 });
     } else {

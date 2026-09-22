@@ -153,10 +153,10 @@ function BrowserShowcase() {
         </div>
         <div className="browser-screen">
           <img
-            src="/workspace.png"
-            alt="The PulseGraph workspace with an animated architecture diagram, the chat panel and the export menu"
-            width={1440}
-            height={810}
+            src="/pulsegraph-live-flow.gif?v=8"
+            alt="PulseGraph animating a production API from customer and edge security through services, data stores and monitoring"
+            width={2560}
+            height={1440}
             loading="lazy"
             decoding="async"
           />
@@ -212,11 +212,11 @@ export function LandingPage({
           <h1 id="landing-title">
             Mermaid in.
             <br />
-            <span>Animated diagram out.</span>
+            <span>Clarity in motion.</span>
           </h1>
           <p className="hero-description">
-            Paste a flowchart or describe your system in plain English. Pan, edit and
-            export it without leaving the browser.
+            Turn Mermaid or plain English into an architecture diagram people can follow
+            at a glance. Edit it live, then export the story as GIF, SVG or PNG.
           </p>
           <form
             className="creation-card"
@@ -246,7 +246,7 @@ export function LandingPage({
                 type="submit"
                 disabled={busy || !input.trim()}
               >
-                Generate diagram
+                Animate my diagram
               </button>
             </div>
           </form>
@@ -259,10 +259,10 @@ export function LandingPage({
       <section className="landing-browser" aria-labelledby="browser-title">
         <div className="browser-heading">
           <span className="section-kicker">LOCAL-FIRST WORKSPACE</span>
-          <h2 id="browser-title">Everything runs in the browser.</h2>
+          <h2 id="browser-title">See every request move.</h2>
           <p>
-            Your diagram, its Mermaid source and every edit stay on this device. AI is
-            optional and stays off until you add a key.
+            Follow traffic through services, decisions and data stores—then share the
+            exact flow as a looping GIF. Your source and edits stay on this device.
           </p>
         </div>
         <BrowserShowcase />
@@ -282,8 +282,8 @@ export function LandingPage({
         aria-labelledby="examples-title"
       >
         <div className="examples-heading">
-          <h2 id="examples-title">Start from a working example.</h2>
-          <p>Each one opens straight into the editor.</p>
+          <h2 id="examples-title">Start with a system that already moves.</h2>
+          <p>Open an example, reshape the flow and make it yours.</p>
         </div>
         <div className="example-grid">
           {examples.map((example) => (
@@ -304,7 +304,7 @@ export function LandingPage({
       <footer className="landing-footer">
         <div className="footer-brand">
           <strong>PulseGraph</strong>
-          <p>Animated architecture diagrams, made in the browser.</p>
+          <p>Make complex systems click.</p>
         </div>
         <nav aria-label="Footer">
           <a href="#examples">Examples</a>

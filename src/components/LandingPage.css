@@ -427,6 +427,8 @@
   display: block;
   width: 100%;
   height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
   transform: scale(1.002);
 }
 .browser-screen-glare {
@@ -826,5 +828,8 @@
   .browser-scan-line,
   .window-live::before {
     animation: none;
+  }
+  .browser-screen img {
+    content: url('/pulsegraph-live-flow-static.png');
   }
 }

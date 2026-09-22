@@ -1,5 +1,9 @@
 import { scopedAnimations } from '../lib/animations';
-import { pulseTravelWindow } from '../lib/pulseTravel';
+import {
+  pulseRepeatDelay,
+  pulseTravelDuration,
+  pulseTravelWindow,
+} from '../lib/pulseTravel';
 import { pointsToPath, pointsToRoundedPath } from '../lib/svgPath';
 import { useCanvasViewport } from '../lib/useCanvasViewport';
 import { useEffect, useRef, useMemo } from 'react';
@@ -154,6 +158,23 @@ function RichNodeIcon({ type, label }: { type: NodeType; label?: string }) {
     !isDbKw &&
     !isCacheKw &&
     !isQueueKw;
+
+  // An explicit Mermaid decision shape carries more meaning than keywords in
+  // its label. For example, `C{Cache hit}` is a decision, not a cache store.
+  if (type === 'gateway') {
+    return (
+      <g transform="translate(2,2) scale(1.1)">
+        <polygon
+          points="12,0 24,12 12,24 0,12"
+          fill="rgba(6, 182, 212, 0.25)"
+          stroke="#22D3EE"
+          strokeWidth="2"
+        />
+        <circle cx="12" cy="12" r="4" fill="#00F2FE" className="rich-pulse" />
+        <path d="M6,12 L18,12 M12,6 L12,18" stroke="#FFFFFF" strokeWidth="1.5" />
+      </g>
+    );
+  }
 
   if (robotWins) {
     return (
@@ -737,7 +758,6 @@ function RichNodeIcon({ type, label }: { type: NodeType; label?: string }) {
           />
         </g>
       );
-    case 'gateway':
     case 'loadbalancer':
       return (
         <g transform="translate(2,2) scale(1.1)">
@@ -1154,6 +1174,26 @@ export function RichDiagramCanvas({
     if (reducedMotion) return;
     ctxRef.current = gsap.context((context) => {
       const animate = scopedAnimations(svgRef.current);
+      const maxLevel = Math.max(1, ...nodeLevels.values());
+      const revealBudget = variant === 'flow' ? 0.35 : 0.7;
+      const revealDelay = (level: number) =>
+        (Math.max(0, level) / maxLevel) * revealBudget;
+      const edgeRevealDuration = variant === 'flow' ? 0.35 : 0.45;
+      const flashArrival = (nodeId: string) => {
+        const glowEl = svgRef.current?.getElementById(`glow-${nodeId}`);
+        if (!glowEl) return;
+        gsap.fromTo(
+          glowEl,
+          { opacity: 0.8, scale: 1.05, transformOrigin: 'center' },
+          {
+            opacity: 0,
+            scale: 1,
+            duration: 0.55,
+            ease: 'power2.out',
+            overwrite: 'auto',
+          },
+        );
+      };
       (graph.groups || []).forEach((grp) => {
         const grpEl = svgRef.current?.getElementById(`group-${grp.id}`);
         if (grpEl) {
@@ -1168,8 +1208,8 @@ export function RichDiagramCanvas({
             { opacity: 0 },
             {
               opacity: 1,
-              duration: variant === 'flow' ? 0.35 : 0.8,
-              delay: minLevel * (variant === 'flow' ? 0.12 : 0.6),
+              duration: variant === 'flow' ? 0.3 : 0.45,
+              delay: revealDelay(minLevel),
             },
           );
         }
@@ -1186,8 +1226,8 @@ export function RichDiagramCanvas({
               opacity: 1,
               scale: 1,
               y: 0,
-              duration: variant === 'flow' ? 0.35 : 0.7,
-              delay: level * (variant === 'flow' ? 0.12 : 0.6),
+              duration: variant === 'flow' ? 0.3 : 0.45,
+              delay: revealDelay(level),
               ease: 'back.out(1.2)',
               clearProps: 'transform',
             },
@@ -1330,7 +1370,7 @@ export function RichDiagramCanvas({
         ],
       });
 
-      graph.edges.forEach((edge, i) => {
+      graph.edges.forEach((edge) => {
         const pathEl = svgRef.current?.getElementById(
           `path-${edge.id}`,
         ) as SVGPathElement | null;
@@ -1352,16 +1392,14 @@ export function RichDiagramCanvas({
         // animating the connector. This keeps branch and loop markers clear
         // of node borders while the diagram is entering.
         const edgeDelay =
-          variant === 'flow'
-            ? Math.max(srcLevel, targetLevel) * 0.12 + 0.5
-            : Math.max(srcLevel, targetLevel) * 0.6 + 0.8;
+          revealDelay(Math.max(srcLevel, targetLevel)) + edgeRevealDuration;
 
         if (!edge.isBackEdge) {
           const length = pathEl.getTotalLength();
           gsap.set(pathEl, { strokeDasharray: length, strokeDashoffset: length });
           gsap.to(pathEl, {
             strokeDashoffset: 0,
-            duration: 1.2,
+            duration: edgeRevealDuration,
             delay: edgeDelay,
             ease: 'power2.out',
             onComplete: () => {
@@ -1382,7 +1420,7 @@ export function RichDiagramCanvas({
           gsap.set(pathEl, { opacity: 0 });
           gsap.to(pathEl, {
             opacity: 1,
-            duration: 1.2,
+            duration: edgeRevealDuration,
             delay: edgeDelay,
             ease: 'power2.out',
             onComplete: () => {
@@ -1400,7 +1438,7 @@ export function RichDiagramCanvas({
           });
         }
 
-        const duration = 1.5 + (i % 5) * 0.28;
+        const duration = pulseTravelDuration(pathEl.getTotalLength());
         if (variant === 'flow') {
           const length = pathEl.getTotalLength();
           const pulseWindow = pulseTravelWindow(length);
@@ -1409,50 +1447,50 @@ export function RichDiagramCanvas({
             strokeDasharray: `18 ${Math.max(18, length - 18)}`,
             strokeDashoffset: -pulseWindow.inset,
           });
-          gsap.to(pulseEl, { opacity: 1, duration: 0.25, delay: edgeDelay + 0.5 });
           gsap.to(pulseEl, {
-            strokeDashoffset: -(length - pulseWindow.inset),
-            duration,
-            repeat: -1,
-            ease: 'none',
-            delay: edgeDelay + 0.5,
+            opacity: 1,
+            duration: 0.25,
+            delay: edgeDelay + edgeRevealDuration,
           });
+          gsap
+            .timeline({
+              repeat: -1,
+              repeatDelay: pulseRepeatDelay(length),
+              delay: edgeDelay + edgeRevealDuration,
+            })
+            .to(pulseEl, {
+              strokeDashoffset: -(length * pulseWindow.end),
+              duration,
+              ease: 'none',
+              onComplete: () => context.add(() => flashArrival(edge.to)),
+            });
           return;
         }
         const pulseWindow = pulseTravelWindow(pathEl.getTotalLength());
         gsap.set(pulseEl, { opacity: 0 });
-        gsap.to(pulseEl, { opacity: 1, duration: 0.3, delay: edgeDelay + 0.5 });
         gsap.to(pulseEl, {
-          duration: duration,
-          repeat: -1,
-          ease: 'none',
-          delay: edgeDelay + 0.5,
-          motionPath: {
-            path: pathEl as SVGPathElement,
-            align: pathEl as SVGPathElement,
-            alignOrigin: [0.5, 0.5],
-            start: pulseWindow.start,
-            end: pulseWindow.end,
-          },
-          onRepeat: () => {
-            context.add(() => {
-              const glowEl = svgRef.current?.getElementById(`glow-${edge.to}`);
-              if (glowEl) {
-                gsap.fromTo(
-                  glowEl,
-                  { opacity: 0.8, scale: 1.05, transformOrigin: 'center' },
-                  {
-                    opacity: 0.07,
-                    scale: 1,
-                    duration: 0.6,
-                    ease: 'power2.out',
-                    overwrite: 'auto',
-                  },
-                );
-              }
-            });
-          },
+          opacity: 1,
+          duration: 0.3,
+          delay: edgeDelay + edgeRevealDuration,
         });
+        gsap
+          .timeline({
+            repeat: -1,
+            repeatDelay: pulseRepeatDelay(pathEl.getTotalLength()),
+            delay: edgeDelay + edgeRevealDuration,
+          })
+          .to(pulseEl, {
+            duration: duration,
+            ease: 'none',
+            motionPath: {
+              path: pathEl as SVGPathElement,
+              align: pathEl as SVGPathElement,
+              alignOrigin: [0.5, 0.5],
+              start: pulseWindow.start,
+              end: pulseWindow.end,
+            },
+            onComplete: () => context.add(() => flashArrival(edge.to)),
+          });
       });
     }, svgRef);
     return () => ctxRef.current?.revert();
@@ -1681,116 +1719,118 @@ export function RichDiagramCanvas({
           })}
 
           {/* Edges */}
-          {graph.edges.map((edge) => {
-            const d =
-              variant === 'flow'
-                ? pointsToRoundedPath(edge.points ?? [])
-                : pointsToPath(edge.points ?? []);
-            if (!d) return null;
-            const defaultEdgeColor = theme === 'light' ? '#94A3B8' : '#334155';
-            const edgeColor = edgeFlowColors.get(edge.id) || defaultEdgeColor;
+          <g data-edge-layer="true">
+            {graph.edges.map((edge) => {
+              const d =
+                variant === 'flow'
+                  ? pointsToRoundedPath(edge.points ?? [])
+                  : pointsToPath(edge.points ?? []);
+              if (!d) return null;
+              const defaultEdgeColor = theme === 'light' ? '#94A3B8' : '#334155';
+              const edgeColor = edgeFlowColors.get(edge.id) || defaultEdgeColor;
 
-            let markerId = 'arr-rich';
-            if (edgeColor === ROOT_STYLE.border) {
-              markerId = 'arr-flow-root';
-            } else {
-              const palIndex = FLOW_PALETTE.findIndex((p) => p.border === edgeColor);
-              if (palIndex !== -1) {
-                markerId = `arr-flow-${palIndex}`;
+              let markerId = 'arr-rich';
+              if (edgeColor === ROOT_STYLE.border) {
+                markerId = 'arr-flow-root';
+              } else {
+                const palIndex = FLOW_PALETTE.findIndex((p) => p.border === edgeColor);
+                if (palIndex !== -1) {
+                  markerId = `arr-flow-${palIndex}`;
+                }
               }
-            }
 
-            // Anchor labels near the SOURCE on routed arcs so yes/no sits next
-            // to its decision node instead of floating mid-detour.
-            const mid = labelAnchor(edge.points);
-            const labelW = edge.label
-              ? Math.min(150, Math.max(36, edge.label.length * 6.2 + 16))
-              : 0;
-            const edgeBg = theme === 'light' ? '#FFFFFF' : '#0F172A';
-            const edgeStroke = theme === 'light' ? '#E2E8F0' : '#1E293B';
-            const edgeText = theme === 'light' ? '#475569' : '#94A3B8';
-
-            return (
-              <g key={edge.id}>
-                <path
-                  id={`path-${edge.id}`}
-                  d={d}
-                  data-dashed={edge.dashed || false}
-                  fill="none"
-                  stroke={
-                    variant === 'flow'
-                      ? theme === 'light'
-                        ? '#CBD2DE'
-                        : '#3B4659'
-                      : edgeColor
-                  }
-                  strokeWidth={
-                    variant === 'flow' ? (edge.thick ? 3 : 2) : edge.thick ? 4 : 2.5
-                  }
-                  markerEnd={
-                    edge.arrow === 'none'
-                      ? undefined
-                      : edge.arrow === 'cross'
-                        ? 'url(#edge-cross)'
-                        : edge.arrow === 'circle'
-                          ? 'url(#edge-circle)'
-                          : variant === 'flow'
-                            ? undefined
-                            : 'url(#' + markerId + ')'
-                  }
-                  strokeDasharray={edge.dashed ? '8 6' : undefined}
-                  opacity={edge.dashed ? 0.75 : 1}
-                />
-                {variant === 'flow' ? (
+              return (
+                <g key={`line-${edge.id}-${d}`}>
                   <path
-                    id={`pulse-${edge.id}`}
-                    className="flow-segment"
+                    id={`path-${edge.id}`}
                     d={d}
+                    data-dashed={edge.dashed || false}
                     fill="none"
-                    stroke={edgeColor}
-                    strokeWidth={edge.thick ? 4 : 3}
-                    strokeLinecap="round"
-                    opacity={reducedMotion ? 0.7 : 0}
+                    stroke={
+                      variant === 'flow'
+                        ? theme === 'light'
+                          ? '#CBD2DE'
+                          : '#3B4659'
+                        : edgeColor
+                    }
+                    strokeWidth={
+                      variant === 'flow' ? (edge.thick ? 3 : 2) : edge.thick ? 4 : 2.5
+                    }
+                    markerEnd={
+                      edge.arrow === 'none'
+                        ? undefined
+                        : edge.arrow === 'cross'
+                          ? 'url(#edge-cross)'
+                          : edge.arrow === 'circle'
+                            ? 'url(#edge-circle)'
+                            : 'url(#' + markerId + ')'
+                    }
+                    strokeDasharray={edge.dashed ? '8 6' : undefined}
+                    opacity={edge.dashed ? 0.75 : 1}
                   />
-                ) : (
-                  <circle
-                    id={`pulse-${edge.id}`}
-                    r="6"
-                    fill={edgeColor}
-                    filter="url(#pg-rich)"
-                    opacity="0"
-                  />
-                )}
-                {edge.label && mid && (
-                  <g data-edge-label="true">
-                    <rect
-                      x={mid.x - labelW / 2}
-                      y={mid.y - 12}
-                      width={labelW}
-                      height={24}
-                      rx="6"
-                      fill={edgeBg}
-                      opacity="0.96"
-                      stroke={edgeStroke}
-                      strokeWidth="1.5"
+                  {variant === 'flow' ? (
+                    <path
+                      id={`pulse-${edge.id}`}
+                      className="flow-segment"
+                      d={d}
+                      fill="none"
+                      stroke={edgeColor}
+                      strokeWidth={edge.thick ? 4 : 3}
+                      strokeLinecap="round"
+                      opacity={reducedMotion ? 0.7 : 0}
                     />
-                    <text
-                      x={mid.x}
-                      y={mid.y}
-                      fill={edgeText}
-                      fontSize="10"
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fontFamily="Inter, system-ui, sans-serif"
-                      fontWeight="600"
-                    >
-                      {parseLabel(edge.label)}
-                    </text>
-                  </g>
-                )}
-              </g>
-            );
-          })}
+                  ) : (
+                    <circle
+                      id={`pulse-${edge.id}`}
+                      r="6"
+                      fill={edgeColor}
+                      filter="url(#pg-rich)"
+                      opacity="0"
+                    />
+                  )}
+                </g>
+              );
+            })}
+
+            {/* Render every label after every connector and pulse. This is a
+                true SVG overlay for the live canvas, not an export-only fix. */}
+            {graph.edges.map((edge) => {
+              if (!edge.label) return null;
+              const mid = labelAnchor(edge.points);
+              if (!mid) return null;
+              const labelW = Math.min(150, Math.max(36, edge.label.length * 6.2 + 16));
+              const edgeBg = theme === 'light' ? '#FFFFFF' : '#0B1120';
+              const edgeStroke = theme === 'light' ? '#CBD5E1' : '#334155';
+              const edgeText = theme === 'light' ? '#334155' : '#CBD5E1';
+              return (
+                <g key={`label-${edge.id}`} data-edge-label="true">
+                  <rect
+                    x={mid.x - labelW / 2}
+                    y={mid.y - 12}
+                    width={labelW}
+                    height={24}
+                    rx="6"
+                    fill={edgeBg}
+                    opacity="0.98"
+                    stroke={edgeStroke}
+                    strokeWidth="1.5"
+                  />
+                  <text
+                    x={mid.x}
+                    y={mid.y}
+                    fill={edgeText}
+                    fontSize="10"
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontFamily="Inter, system-ui, sans-serif"
+                    fontWeight="700"
+                  >
+                    {parseLabel(edge.label)}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
 
           {/* Nodes */}
           {graph.nodes.map((node) => {
@@ -1833,7 +1873,7 @@ export function RichDiagramCanvas({
                   style={{ transformOrigin: `${w / 2}px ${h / 2}px` }}
                 >
                   {/* Glow */}
-                  {variant === 'rich' && (
+                  {(variant === 'rich' || variant === 'flow') && (
                     <rect
                       id={`glow-${node.id}`}
                       x="-6"
@@ -1843,12 +1883,13 @@ export function RichDiagramCanvas({
                       rx="16"
                       fill={st.glow}
                       filter="url(#pg-rich)"
-                      opacity="0.25"
+                      opacity="0"
                     />
                   )}
 
                   {/* Glassmorphism background */}
                   <rect
+                    data-node-body="true"
                     width={w}
                     height={h}
                     rx={variant === 'flow' ? 14 : 12}

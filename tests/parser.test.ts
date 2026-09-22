@@ -182,6 +182,13 @@ test('shape → type mapping matches the README table', () => {
   assert.equal(typeOf('HX'), 'gateway');
 });
 
+test('stadium labels omit Mermaid delimiters and retain user semantics', () => {
+  const graph = parseMermaid('flowchart TD\nUser([User]) --> API[API]');
+  const user = graph.nodes.find((node) => node.id === 'User')!;
+  assert.equal(user.label, 'User');
+  assert.equal(user.type, 'user');
+});
+
 test('late shape definition upgrades an earlier plain reference', () => {
   const g = parseMermaid('flowchart LR\nB --> C\nB{Is valid?}');
   const b = g.nodes.find((n) => n.id === 'B')!;
