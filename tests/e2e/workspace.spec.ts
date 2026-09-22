@@ -143,6 +143,11 @@ test('browser showcase adds responsive depth and respects reduced motion', async
   await stage.scrollIntoViewIfNeeded();
   await expect(shot).toBeVisible();
   await expect(shot.locator('img')).toHaveJSProperty('complete', true);
+  await expect
+    .poll(() =>
+      shot.locator('img').evaluate((image) => (image as HTMLImageElement).naturalWidth),
+    )
+    .toBeGreaterThan(0);
 
   const bounds = await stage.boundingBox();
   expect(bounds).not.toBeNull();

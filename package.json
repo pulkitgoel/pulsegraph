@@ -13,6 +13,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:e2e": "playwright test",
+    "test:pages": "playwright test --config playwright.pages.config.ts",
     "verify": "npm run format:check && npm run lint && npm run build && npm run typecheck:tests && npm test",
     "typecheck:tests": "tsc -p tsconfig.tests.json"
   },

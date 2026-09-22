@@ -170,6 +170,7 @@ header. See [SECURITY.md](SECURITY.md).
     npm run verify
     npx playwright install chromium
     npm run test:e2e
+    npm run test:pages
     npm audit
     npm run preview
 
@@ -188,6 +189,10 @@ CI uses Node 24, a clean install, formatting, lint, strict TypeScript/build,
 unit tests, dependency audit, and Chromium end-to-end tests. Automated provider
 tests are mocked and never require a real key; live providers need a separate
 smoke test.
+
+`npm run test:pages` builds with the `/pulsegraph/` deployment prefix and checks
+that the landing GIF and reduced-motion PNG load successfully, catching asset
+paths that work locally but break on GitHub Pages.
 
 Regressions cover parsing (including stadium labels), malformed AI output, graph
 preservation, document round trips, framing limits, cycles, self-loops and a

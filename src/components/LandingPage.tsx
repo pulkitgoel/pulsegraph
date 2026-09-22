@@ -153,7 +153,7 @@ function BrowserShowcase() {
         </div>
         <div className="browser-screen">
           <img
-            src="/pulsegraph-live-flow.gif?v=8"
+            src={`${import.meta.env.BASE_URL}pulsegraph-live-flow.gif?v=8`}
             alt="PulseGraph animating a production API from customer and edge security through services, data stores and monitoring"
             width={2560}
             height={1440}
