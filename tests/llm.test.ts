@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { sendMessage, designPresentation } from '../src/services/llmService.ts';
 import { parseDiagram, readCompletion } from '../src/services/llmValidation.ts';
 import { requestCompletion } from '../src/services/llmClient.ts';
+import { RESEARCH_FLOW } from './fixtures/researchFlow';
+import { RESEARCH_ROLES, RESEARCH_PRESENTATION } from './fixtures/researchPresentation';
 
 const SOURCE = 'flowchart LR\nA[Client] --> B[API]';
 function completion(content: unknown, finishReason = 'stop'): Response {
@@ -12,6 +14,37 @@ function completion(content: unknown, finishReason = 'stop'): Response {
     ],
   });
 }
+
+test('AI composition receives edge labels and groups but cannot rewrite source', async () => {
+  let body: { messages: { role: string; content: string }[] } | undefined;
+  const fetchMock = mock.method(
+    globalThis,
+    'fetch',
+    async (_input: unknown, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return completion({
+        roles: RESEARCH_ROLES,
+        presentation: RESEARCH_PRESENTATION,
+        mermaidCode: 'flowchart LR; FAKE[Invented]',
+      });
+    },
+  );
+  try {
+    const result = await designPresentation(RESEARCH_FLOW, 'test-key', 'deepseek');
+    assert.equal(result.mermaidSource, RESEARCH_FLOW);
+    assert.deepEqual(result.presentation, RESEARCH_PRESENTATION);
+    const content = JSON.parse(
+      body!.messages.find((item) => item.role === 'user')!.content,
+    );
+    assert.equal(
+      content.edges.find((edge: { id: string }) => edge.id === 'e_14').label,
+      'no, retry max 2',
+    );
+    assert.deepEqual(content.groups[0].members, ['A1', 'A2', 'A3', 'A4']);
+  } finally {
+    fetchMock.mock.restore();
+  }
+});
 
 test('DeepSeek uses the current non-thinking model without changing Ollama options', async () => {
   const bodies: Record<string, unknown>[] = [];

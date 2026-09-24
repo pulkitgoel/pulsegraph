@@ -1,4 +1,5 @@
 import { scopedAnimations } from '../lib/animations';
+import { flowSegmentMotion } from '../lib/flowSegment';
 import {
   pulseRepeatDelay,
   pulseTravelDuration,
@@ -76,7 +77,7 @@ const NODE_STYLES_RICH: Record<
   },
 };
 
-function RichNodeIcon({ type, label }: { type: NodeType; label?: string }) {
+export function RichNodeIcon({ type, label }: { type: NodeType; label?: string }) {
   // Strip markup so keywords match the words the user actually sees.
   const lbl = (label || '').replace(/<[^>]+>/g, ' ').toLowerCase();
   // IMPORTANT: every keyword is wrapped in \b word boundaries. Without them,
@@ -1441,29 +1442,37 @@ export function RichDiagramCanvas({
         const duration = pulseTravelDuration(pathEl.getTotalLength());
         if (variant === 'flow') {
           const length = pathEl.getTotalLength();
-          const pulseWindow = pulseTravelWindow(length);
+          const motion = flowSegmentMotion(length);
           gsap.set(pulseEl, {
             opacity: 0,
-            strokeDasharray: `18 ${Math.max(18, length - 18)}`,
-            strokeDashoffset: -pulseWindow.inset,
-          });
-          gsap.to(pulseEl, {
-            opacity: 1,
-            duration: 0.25,
-            delay: edgeDelay + edgeRevealDuration,
+            strokeDasharray: motion.dasharray,
+            strokeDashoffset: motion.startOffset,
+            autoRound: false,
           });
           gsap
             .timeline({
               repeat: -1,
-              repeatDelay: pulseRepeatDelay(length),
               delay: edgeDelay + edgeRevealDuration,
             })
-            .to(pulseEl, {
-              strokeDashoffset: -(length * pulseWindow.end),
-              duration,
-              ease: 'none',
-              onComplete: () => context.add(() => flashArrival(edge.to)),
-            });
+            .fromTo(
+              pulseEl,
+              { opacity: 0 },
+              { opacity: 1, duration: motion.fadeIn, ease: 'none' },
+              0,
+            )
+            .fromTo(
+              pulseEl,
+              { strokeDashoffset: motion.startOffset },
+              {
+                strokeDashoffset: motion.endOffset,
+                duration: motion.duration,
+                autoRound: false,
+                ease: 'none',
+                onComplete: () => context.add(() => flashArrival(edge.to)),
+              },
+              0,
+            )
+            .to(pulseEl, { opacity: 0, duration: motion.reset, ease: 'none' });
           return;
         }
         const pulseWindow = pulseTravelWindow(pathEl.getTotalLength());

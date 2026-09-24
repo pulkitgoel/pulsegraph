@@ -2,17 +2,22 @@ import type { Graph } from '../types';
 import { parseDiagram } from '../services/llmValidation';
 import { computeLayout, roleBlueprintLayout } from '../parser/layoutEngine';
 import { validateRoles } from './roles';
+import { validatePresentationPlan, type PresentationPlan } from './presentationPlan';
 
 export interface DiagramDocument {
   source: string;
   graph: Graph;
   roles: Record<string, string> | null;
+  presentation?: PresentationPlan;
 }
 
 export function createDocument(
   source: string,
   roles: Record<string, string> | null = null,
+  presentation?: PresentationPlan,
 ): DiagramDocument {
+  if (presentation && !roles)
+    throw new Error('Presentation metadata requires validated roles.');
   const parsed = parseDiagram(source);
   const validatedRoles = roles
     ? validateRoles(
@@ -27,6 +32,9 @@ export function createDocument(
       ? roleBlueprintLayout(parsed, validatedRoles)
       : computeLayout(parsed),
     roles: validatedRoles,
+    ...(presentation
+      ? { presentation: validatePresentationPlan(presentation, parsed) }
+      : {}),
   };
 }
 
@@ -36,6 +44,7 @@ export function serializeDocument(document: DiagramDocument): string {
       version: 1,
       source: document.source,
       roles: document.roles,
+      ...(document.presentation ? { presentation: document.presentation } : {}),
     },
     null,
     2,
@@ -66,5 +75,11 @@ export function deserializeDocument(raw: string): DiagramDocument {
           graph.nodes.map((node) => node.id),
         );
 
-  return createDocument(data.source, roles);
+  const presentation =
+    data.presentation == null
+      ? undefined
+      : validatePresentationPlan(data.presentation, graph);
+  if (presentation && !roles)
+    throw new Error('Presentation metadata requires validated roles.');
+  return createDocument(data.source, roles, presentation);
 }

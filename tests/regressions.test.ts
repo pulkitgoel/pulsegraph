@@ -6,6 +6,7 @@ import { buildBlueprintSvg } from '../src/render/blueprintSvg.ts';
 import { sanitizeAnimationCss } from '../src/lib/sanitizeCss.ts';
 import { presentationProfile } from '../src/lib/presentationProfile.ts';
 import { pointsToRoundedPath } from '../src/lib/svgPath.ts';
+import { flowSegmentFrame, flowSegmentMotion } from '../src/lib/flowSegment.ts';
 import {
   PULSE_MIN_DURATION_SECONDS,
   PULSE_TRAVEL_SPEED,
@@ -23,6 +24,31 @@ test('flow paths round routed vertices without moving their endpoints', () => {
     { x: 100, y: 80 },
   ]);
   assert.equal(path, 'M 0 0 L 82 0 Q 100 0 100 18 L 100 80');
+});
+
+test('Flow segments keep constant speed, arrive head-first and reset while hidden', () => {
+  for (const length of [4, 70, 240, 1300]) {
+    const motion = flowSegmentMotion(length);
+    const [segment, gap] = motion.dasharray.split(' ').map(Number);
+    assert.ok(gap > length, 'a second dash must never wrap onto the path');
+    assert.ok(
+      Math.abs(segment - motion.endOffset - length * pulseTravelWindow(length).end) <
+        1e-9,
+    );
+    const a = flowSegmentFrame(length, motion.duration * 0.25);
+    const b = flowSegmentFrame(length, motion.duration * 0.75);
+    assert.ok(
+      Math.abs(
+        (a.dashoffset - b.dashoffset) / (motion.duration * 0.5) - PULSE_TRAVEL_SPEED,
+      ) < 1e-8,
+    );
+    assert.ok(motion.reset <= 0.15, 'no multi-second pause at arrival');
+    const end = flowSegmentFrame(length, motion.duration + motion.reset - 1e-6);
+    assert.ok(end.opacity < 0.001);
+    const restart = flowSegmentFrame(length, motion.duration + motion.reset);
+    assert.equal(restart.opacity, 0);
+    assert.equal(restart.dashoffset, motion.startOffset);
+  }
 });
 
 test('animated edge markers stay inside the connector corridor', () => {

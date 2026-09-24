@@ -1,6 +1,7 @@
 import type { ChatMessage, Graph, LlmProvider, OllamaModel } from '../types';
 import { looksLikeMermaid } from '../parser/mermaidParser';
 import { validateRoles } from '../lib/roles';
+import { validatePresentationPlan, type PresentationPlan } from '../lib/presentationPlan';
 import { requestCompletion } from './llmClient';
 import { GENERATE_DIAGRAM_PROMPT, PRESENTATION_ROLES_PROMPT } from './llmPrompts';
 import { parseDiagram } from './llmValidation';
@@ -13,6 +14,7 @@ export interface SendMessageResult {
   mermaidSource: string;
   isOffTopic: boolean;
   roles?: Record<string, string>;
+  presentation?: PresentationPlan;
 }
 
 type ProgressCallback = (step: 'generating' | 'validating' | 'rendering') => void;
@@ -97,7 +99,7 @@ export async function sendMessage(
   };
 }
 
-/** The model assigns roles only; the original graph remains authoritative. */
+/** The model proposes composition metadata; the original graph remains authoritative. */
 export async function designPresentation(
   currentMermaid: string,
   apiKey: string,
@@ -113,7 +115,13 @@ export async function designPresentation(
     systemPrompt: PRESENTATION_ROLES_PROMPT,
     content: JSON.stringify({
       nodes: graph.nodes.map(({ id, label }) => ({ id, label })),
-      edges: graph.edges.map(({ from, to }) => ({ from, to })),
+      edges: graph.edges.map(({ id, from, to, label }) => ({ id, from, to, label })),
+      groups: graph.groups?.map(({ id, label, members, parentId }) => ({
+        id,
+        label,
+        members,
+        parentId,
+      })),
     }),
     apiKey,
     provider,
@@ -125,11 +133,16 @@ export async function designPresentation(
     response.roles,
     graph.nodes.map((node) => node.id),
   );
+  const presentation =
+    response.presentation == null
+      ? undefined
+      : validatePresentationPlan(response.presentation, graph);
   onStep?.('rendering');
 
   return {
     graph,
     roles,
+    presentation,
     mermaidSource: currentMermaid,
     isOffTopic: false,
     message: 'Presentation ready. All original nodes, labels and connections preserved.',

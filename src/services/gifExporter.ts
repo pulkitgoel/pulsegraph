@@ -1,5 +1,6 @@
 import { exportGeometry, type ExportFrame } from './exportGeometry';
-import { pulseTravelDistanceAtTime, pulseTravelWindow } from '../lib/pulseTravel';
+import { pulseTravelDistanceAtTime } from '../lib/pulseTravel';
+import { flowSegmentFrame, flowSegmentMotion } from '../lib/flowSegment';
 export type { ExportFrame } from './exportGeometry';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -16,11 +17,10 @@ function safePathLength(path: SVGPathElement | null): number {
 }
 
 function flowSegmentMetrics(length: number) {
-  const segment = Math.min(42, Math.max(18, length * 0.14));
-  const pulseWindow = pulseTravelWindow(length);
+  const motion = flowSegmentMotion(length);
   return {
-    dasharray: `${segment} ${Math.max(1, length - segment)}`,
-    dashoffset: String(-(length * 0.35 + pulseWindow.inset * 0.15)),
+    dasharray: motion.dasharray,
+    dashoffset: String((motion.startOffset + motion.endOffset) / 2),
   };
 }
 
@@ -221,15 +221,12 @@ export async function exportGif(
       );
       if (!segment) throw new Error('Flow animation is unavailable for this edge.');
       const metrics = flowSegmentMetrics(length);
-      const pulseWindow = pulseTravelWindow(length);
       segment.setAttribute('stroke-dasharray', metrics.dasharray);
       segment.setAttribute('opacity', '1');
       return {
         kind: 'segment' as const,
         segment,
         length,
-        startOffset: -(length * pulseWindow.start),
-        endOffset: -(length * pulseWindow.end),
       };
     }
     const circle = document.createElementNS(SVG_NS, 'circle');
@@ -263,12 +260,13 @@ export async function exportGif(
         (frameCount - 1 - index) / fadeFrames,
       );
       flows.forEach((flow) => {
-        const distance = pulseTravelDistanceAtTime(flow.length, elapsedSeconds);
         if (flow.kind === 'segment') {
-          flow.segment.setAttribute('stroke-dashoffset', String(-distance));
-          flow.segment.setAttribute('opacity', String(loopOpacity));
+          const state = flowSegmentFrame(flow.length, elapsedSeconds);
+          flow.segment.setAttribute('stroke-dashoffset', String(state.dashoffset));
+          flow.segment.setAttribute('opacity', String(loopOpacity * state.opacity));
           return;
         }
+        const distance = pulseTravelDistanceAtTime(flow.length, elapsedSeconds);
         const point = flow.path.getPointAtLength(distance);
         flow.circle.setAttribute('cx', String(point.x));
         flow.circle.setAttribute('cy', String(point.y));

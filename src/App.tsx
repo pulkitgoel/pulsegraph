@@ -3,6 +3,8 @@ import { ApiKeyModal } from './components/ApiKeyModal';
 import { ChatPanel } from './components/ChatPanel';
 import { DiagramCanvas } from './components/DiagramCanvas';
 import { RichDiagramCanvas } from './components/RichDiagramCanvas';
+import { PresentationCanvas } from './components/PresentationCanvas';
+import { localPresentationPlan } from './lib/presentationPlan';
 import { SourceEditor } from './components/SourceEditor';
 import { LandingPage } from './components/LandingPage';
 import { ToolIcon } from './components/ToolIcon';
@@ -73,6 +75,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [viewMode, setViewMode] = useState<'classic' | 'rich' | 'flow'>('rich');
   const [presentationMode, setPresentationMode] = useState(false);
+  const [architecturePreview, setArchitecturePreview] = useState(false);
   const [showChat, setShowChat] = useState(() => window.innerWidth > 700);
   const [showSource, setShowSource] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -94,6 +97,11 @@ export default function App() {
   );
   const isPresentation = presentationMode && !!diagram?.roles;
   const displayedGraph = isPresentation ? diagram?.graph : standardGraph;
+  const slidePlan = useMemo(() => {
+    if (!isPresentation || !architecturePreview || !diagram?.roles || !standardGraph)
+      return null;
+    return diagram.presentation ?? localPresentationPlan(standardGraph, diagram.roles);
+  }, [diagram, standardGraph, isPresentation, architecturePreview]);
 
   useEffect(() => {
     if (!toolsOpen && !exportOpen) return;
@@ -194,11 +202,12 @@ export default function App() {
     }
   }
 
-  async function present(credentials = { apiKey, provider, model }) {
+  async function present(credentials = { apiKey, provider, model }, recompose = false) {
     if (!diagram || operation.current) return;
-    if (diagram.roles) {
+    if (diagram.roles && !recompose) {
       setViewMode('rich');
       setPresentationMode(true);
+      setArchitecturePreview(Boolean(diagram.presentation));
       return;
     }
     if (credentials.provider === 'deepseek' && !credentials.apiKey) {
@@ -223,9 +232,12 @@ export default function App() {
         controller.signal,
       );
       controller.signal.throwIfAborted();
-      workspace.commit(createDocument(result.mermaidSource, result.roles ?? null));
+      workspace.commit(
+        createDocument(result.mermaidSource, result.roles ?? null, result.presentation),
+      );
       setViewMode('rich');
       setPresentationMode(true);
+      setArchitecturePreview(Boolean(result.presentation));
       setMessages((previous) => [...previous, message('assistant', result.message)]);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Presentation failed.');
@@ -258,7 +270,7 @@ export default function App() {
       if (!liveSvg) throw new Error('No diagram to export.');
 
       let svg: Element = liveSvg;
-      if (kind === 'slide') {
+      if (kind === 'slide' && !(isPresentation && architecturePreview)) {
         if (!diagram.roles)
           throw new Error('Choose Presentation before exporting a slide.');
         svg = new DOMParser().parseFromString(
@@ -282,14 +294,16 @@ export default function App() {
               theme,
               3,
               setExportProgress,
-              exportFrame,
+              isPresentation && architecturePreview ? '16:9' : exportFrame,
               controller.signal,
             )
           : await exporter.exportPng(
               svg,
-              kind === 'slide' ? 'light' : theme,
+              kind === 'slide' && !(isPresentation && architecturePreview)
+                ? 'light'
+                : theme,
               setExportProgress,
-              exportFrame,
+              isPresentation && architecturePreview ? '16:9' : exportFrame,
               controller.signal,
             );
       download(
@@ -487,8 +501,10 @@ export default function App() {
                         <label className="menu-field">
                           Frame size
                           <select
-                            value={exportFrame}
-                            disabled={busy}
+                            value={
+                              isPresentation && architecturePreview ? '16:9' : exportFrame
+                            }
+                            disabled={busy || (isPresentation && architecturePreview)}
                             onChange={(event) =>
                               setExportFrame(event.target.value as ExportFrame)
                             }
@@ -651,7 +667,18 @@ export default function App() {
         <main className={'canvas-section ' + (diagram ? 'canvas-section--visible' : '')}>
           {diagram &&
             displayedGraph &&
-            (viewMode !== 'classic' ? (
+            (isPresentation && architecturePreview && standardGraph && slidePlan ? (
+              <PresentationCanvas
+                graph={standardGraph}
+                plan={slidePlan}
+                theme={theme}
+                reducedMotion={reducedMotion}
+                onPrevious={() => setArchitecturePreview(false)}
+                aiPlanned={Boolean(diagram.presentation)}
+                onCompose={() => void present({ apiKey, provider, model }, true)}
+                busy={busy}
+              />
+            ) : viewMode !== 'classic' ? (
               <RichDiagramCanvas
                 graph={displayedGraph}
                 theme={theme}
@@ -665,6 +692,14 @@ export default function App() {
                 reducedMotion={reducedMotion}
               />
             ))}
+          {isPresentation && !architecturePreview && (
+            <button
+              className="btn-icon presentation-preview-toggle"
+              onClick={() => setArchitecturePreview(true)}
+            >
+              Architecture preview · 16:9
+            </button>
+          )}
           {diagram && showSource && (
             <SourceEditor
               key={diagram.source}
@@ -745,11 +780,14 @@ export default function App() {
             setSettingsOpen(false);
             if (resumePresentation) {
               setResumePresentation(false);
-              void present({
-                apiKey: key || apiKey,
-                provider: nextProvider,
-                model: nextModel,
-              });
+              void present(
+                {
+                  apiKey: key || apiKey,
+                  provider: nextProvider,
+                  model: nextModel,
+                },
+                true,
+              );
             }
           }}
           onReset={() => {

@@ -92,25 +92,42 @@ Model mistakes remain possible; inspect the output and use Undo when needed.
 ## Presentation and exports
 
 1. Generate or import a diagram.
-2. Choose **Presentation** to assign entry, pipeline, service and output roles.
-3. Choose **Export → Slide PNG** for a light presentation design.
+2. Choose **Presentation** to ask the configured AI for a main journey and supporting sections.
+3. Inspect the **Architecture preview**, a landscape 16:9 visualization using rich icons.
+4. Choose **Export → GIF** for an animated slide asset, or **Slide PNG / SVG** for a still.
 
-Presentation arranges nodes into semantic zones, wraps long stage sequences into
-compact rows, and routes branches and retries around the cards. Titles and zones adapt to request, delivery, decision, and general process
-flows instead of assuming every diagram is client/backend architecture. Slide PNG
-remains disabled until roles exist. Source edits clear the roles; choose Presentation
-again for the new diagram.
+The architecture preview is an initial prototype alongside the previous layout.
+AI proposes section names, membership and reading order—not replacement nodes,
+connections or coordinates. Validation preserves every source node and edge, keeps
+source subgraphs together, and checks that the main journey follows real connections.
+The renderer places components in horizontal bands and reserves separate connector
+corridors. If it cannot place routes or labels safely, it reports the limitation
+instead of silently drawing overlapping routes. Large diagrams can require more
+rows; this reduces readability on a single slide. Component labels over four wrapped
+lines require shortening or switching back to the previous layout.
 
-| Format            | Output                                                 |
-| ----------------- | ------------------------------------------------------ |
-| PNG               | Settled diagram, up to 2,560 px on the long edge       |
-| GIF               | 45-frame marker loop (~3.15 seconds), up to 2,560 px   |
-| Slide PNG         | Separate light-theme renderer; same frame-size choices |
-| SVG               | Settled vector diagram                                 |
-| Mermaid source    | Portable .mmd source                                   |
-| Editable document | Versioned JSON with source and presentation roles      |
+**Previous layout** restores the existing role-based view. Older saved diagrams
+can open **Architecture preview · 16:9** with a clearly labelled local composition,
+then use **Compose with AI**. Validated plans persist in editable JSON and recovery
+storage. Source edits clear presentation metadata; compose again for the new graph.
+Classic, Rich and Flow rendering are unchanged.
+
+The animated slide is a **flow overview, not an execution trace**: concurrent
+markers illustrate connections, not a simulated choice of cache/retry branches.
+Live arrival glows occur when markers reach destinations. Pause and reduced-motion
+preferences stop live animation. No PowerPoint file generation is included.
+
+| Format            | Output                                                                        |
+| ----------------- | ----------------------------------------------------------------------------- |
+| PNG               | Settled diagram, up to 2,560 px on the long edge                              |
+| GIF               | 45-frame marker loop (~3.15 seconds), up to 2,560 px                          |
+| Slide PNG         | Current 16:9 architecture preview; legacy view uses a separate light renderer |
+| SVG               | Settled vector diagram                                                        |
+| Mermaid source    | Portable .mmd source                                                          |
+| Editable document | Versioned JSON with source, roles and optional validated slide plan           |
 
 Raster frames: content fit, 16:9, 16:10, 4:3, square, A4 landscape and portrait.
+Architecture preview raster exports retain its 16:9 frame and selected theme.
 GIF encoding runs in a worker, one transferred frame at a time. Exports use an
 isolated snapshot and never seek the live GSAP timeline. GIFs use the same marker
 travel timing as the canvas, but do not include live icon animations or
