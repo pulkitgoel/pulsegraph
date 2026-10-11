@@ -55,7 +55,9 @@ test('research flow is complete and readable on the live canvas', async ({ page 
           );
         }).length,
         labelsTopmost: labels.every((label) => {
-          const bounds = label.getBoundingClientRect();
+          // The group's bounds include its optional leader line. Hit-test
+          // the visible text chip, whose centre must stay above the paths.
+          const bounds = label.querySelector('rect')!.getBoundingClientRect();
           const top = document.elementFromPoint(
             bounds.left + bounds.width / 2,
             bounds.top + bounds.height / 2,
@@ -68,6 +70,9 @@ test('research flow is complete and readable on the live canvas', async ({ page 
       pathCount: 24,
       arrowCount: 24,
       labelsTopmost: true,
+    });
+    await page.screenshot({
+      path: `test-results/research-canvas-${mode.toLowerCase()}.png`,
     });
     if (mode !== 'Presentation') {
       const spacing = await page.locator('#pulsegraph-svg').evaluate((svg) => {

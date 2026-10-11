@@ -2,7 +2,12 @@ import type { Graph, GraphEdge, GraphNode } from '../types';
 import type { PresentationPlan, PresentationLane } from './presentationPlan';
 import { presentationLabel } from './presentationLabel';
 import { presentationIconBox, type PresentationIconBounds } from './presentationIcon';
-import { segmentIntersectsBox } from './layoutQuality';
+import {
+  segmentIntersectsBox,
+  inspectLayout,
+  compareLayoutQuality,
+  type LayoutQuality,
+} from './layoutQuality';
 
 type Point = { x: number; y: number };
 type Box = { left: number; right: number; top: number; bottom: number };
@@ -170,11 +175,25 @@ function route(
       if (boxes.some((box) => blocked(a, b, box))) continue;
       const shared = used.some(([c, d]) => crowded(a, b, c, d));
       if (shared) continue;
+      const crossings = used.filter(([c, d]) =>
+        a.x === b.x && c.y === d.y
+          ? a.x > Math.min(c.x, d.x) &&
+            a.x < Math.max(c.x, d.x) &&
+            c.y > Math.min(a.y, b.y) &&
+            c.y <= Math.max(a.y, b.y)
+          : a.y === b.y &&
+            c.x === d.x &&
+            a.y > Math.min(c.y, d.y) &&
+            a.y < Math.max(c.y, d.y) &&
+            c.x > Math.min(a.x, b.x) &&
+            c.x <= Math.max(a.x, b.x),
+      ).length;
       const cost =
         current.cost +
         Math.abs(a.x - b.x) +
         Math.abs(a.y - b.y) +
-        (direction && direction !== nextDirection ? 32 : 0);
+        (direction && direction !== nextDirection ? 32 : 0) +
+        crossings * 160;
       const key = next * 3 + nextDirection;
       if (cost >= (distance.get(key) ?? Infinity)) continue;
       distance.set(key, cost);
@@ -192,13 +211,20 @@ export function presentationLayout(
   plan: PresentationPlan,
   iconBounds: Record<string, PresentationIconBounds> = {},
 ): PresentationScene {
+  let best: { scene: PresentationScene; quality: LayoutQuality } | undefined;
   for (const spacing of [0, 32, 64, 96]) {
     try {
-      return layoutSlide(source, plan, spacing, iconBounds);
+      const scene = layoutSlide(source, plan, spacing, iconBounds);
+      const quality = inspectLayout(scene.graph, false);
+      if (!best || compareLayoutQuality(quality, best.quality) < 0)
+        best = { scene, quality };
+      if (quality.cost.slice(0, 4).every((cost) => cost === 0)) return scene;
     } catch (error) {
-      if (!(error instanceof PresentationRoutingError) || spacing === 96) throw error;
+      if (!(error instanceof PresentationRoutingError) || (spacing === 96 && !best))
+        throw error;
     }
   }
+  if (best) return best.scene;
   throw new Error('Slide layout unavailable.');
 }
 
@@ -495,12 +521,25 @@ function layoutSlide(
     }),
   );
   // Short adjacent routes get their straight corridor first.
-  const ordered = [...source.edges].sort((a, b) => {
-    const length = (edge: GraphEdge) =>
-      Math.abs(byId.get(edge.from)!.x! - byId.get(edge.to)!.x!) +
-      Math.abs(byId.get(edge.from)!.y! - byId.get(edge.to)!.y!);
-    return length(a) - length(b);
-  });
+  const length = (edge: GraphEdge) =>
+    Math.abs(byId.get(edge.from)!.x! - byId.get(edge.to)!.x!) +
+    Math.abs(byId.get(edge.from)!.y! - byId.get(edge.to)!.y!);
+  const ordered = [...source.edges].sort((a, b) => length(a) - length(b));
+  // Reserve the outermost branch first. Routing the nearest target first
+  // traps later, longer branches across its final approach.
+  for (const node of nodes) {
+    const slots = ordered.flatMap((edge, index) =>
+      edge.from === node.id && nodeRows.get(edge.to)! > nodeRows.get(node.id)!
+        ? [index]
+        : [],
+    );
+    const branches = slots
+      .map((index) => ordered[index])
+      .sort((a, b) => length(b) - length(a));
+    slots.forEach((index, i) => {
+      ordered[index] = branches[i];
+    });
+  }
   for (const edge of ordered) {
     const { a, b } = attachments.get(edge.id)!;
     // Reserve every connector's approach before routing, not only earlier edges.
@@ -528,6 +567,18 @@ function layoutSlide(
     if (!path)
       throw new PresentationRoutingError(
         'This diagram needs more routing space for the slide preview. The previous layout is still available.',
+        { cause: edge.id },
+      );
+    // A downward branch leaving a side port should use the corridor below
+    // its row. An escape over the whole journey is evidence that the row
+    // gap is too small, even when the long detour technically clears nodes.
+    if (
+      nodeRows.get(edge.to)! > nodeRows.get(edge.from)! &&
+      sides.get(edge.id)!.from !== 'top' &&
+      path.some((point) => point.y < a.stub.y - 0.1)
+    )
+      throw new PresentationRoutingError(
+        'This slide needs a wider corridor between its rows.',
         { cause: edge.id },
       );
     const points = simplify([a.tip, ...path, b.tip]);

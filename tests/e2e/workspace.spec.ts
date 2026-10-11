@@ -80,7 +80,7 @@ test('Classic benefit flow exports neutral retry connectors with separate arrow 
         entryDistance: Math.hypot(end.x - other.x, end.y - other.y),
       };
     });
-    expect(connectors.strokes).toEqual([theme === 'light' ? '#CBD5E1' : '#1E293B']);
+    expect(connectors.strokes).toEqual([theme === 'light' ? '#64748B' : '#94A3B8']);
     expect(connectors.markers).toEqual(['url(#arr)']);
     expect(connectors.entryDistance).toBeGreaterThan(30);
     const gif = await exportFile(page, 'Animated GIF');

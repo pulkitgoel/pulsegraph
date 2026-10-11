@@ -101,18 +101,77 @@ test('diagonal intersection checks do not mistake an empty bounding rectangle fo
   );
 });
 
-test('bounded layout search removes the production label conflict without changing topology', () => {
-  const graph = parseDiagram(DIAGRAM_EXAMPLES[0].source);
-  const baseline = inspectLayout(computeLayoutCandidate(graph));
-  const selected = computeLayout(graph);
-  const quality = inspectLayout(selected);
-  assert.ok(baseline.cost[0] > 0);
-  assert.equal(quality.cost[0], 0);
-  assert.ok(compareLayoutQuality(quality, baseline) < 0);
-  assert.deepEqual(
-    selected.edges.map(({ id, from, to, label }) => ({ id, from, to, label })),
-    graph.edges.map(({ id, from, to, label }) => ({ id, from, to, label })),
+test('production fan-out has ordered ports, no crossings and clear arrow approaches', () => {
+  for (const direction of ['LR', 'RL', 'TB', 'BT'] as const) {
+    const graph = parseDiagram(
+      DIAGRAM_EXAMPLES[0].source.replace('flowchart LR', `flowchart ${direction}`),
+    );
+    const baseline = inspectLayout(computeLayoutCandidate(graph));
+    const selected = computeLayout(graph);
+    const quality = inspectLayout(selected);
+    assert.deepEqual(quality.cost.slice(0, 4), [0, 0, 0, 0]);
+    assert.ok(compareLayoutQuality(quality, baseline) <= 0);
+    const vertical = direction === 'TB' || direction === 'BT';
+    const cross = (p: { x: number; y: number }) => (vertical ? p.x : p.y);
+    const branches = selected.edges
+      .filter((e) => e.from === 'API')
+      .sort((a, b) => cross(a.points!.at(-1)!) - cross(b.points!.at(-1)!));
+    for (let i = 0; i < branches.length; i++) {
+      const points = branches[i].points!;
+      const end = points.at(-1)!,
+        bend = points.at(-2)!;
+      assert.ok(Math.hypot(end.x - bend.x, end.y - bend.y) >= 32);
+      if (i) assert.ok(cross(points[0]) > cross(branches[i - 1].points![0]));
+    }
+    assert.deepEqual(
+      selected.edges.map(({ id, from, to, label }) => ({ id, from, to, label })),
+      graph.edges.map(({ id, from, to, label }) => ({ id, from, to, label })),
+    );
+  }
+});
+
+test('audit reports connector crossings and short arrow approaches instead of hiding them', () => {
+  const graph: Graph = {
+    nodes: ['A', 'B', 'C', 'D'].map((id, index) => ({
+      id,
+      label: id,
+      type: 'service',
+      width: 10,
+      height: 10,
+      x: -100,
+      y: index * 20,
+    })),
+    edges: [
+      {
+        id: 'horizontal',
+        from: 'A',
+        to: 'B',
+        points: [
+          { x: 0, y: 50 },
+          { x: 100, y: 50 },
+        ],
+      },
+      {
+        id: 'vertical',
+        from: 'C',
+        to: 'D',
+        points: [
+          { x: 50, y: 0 },
+          { x: 50, y: 100 },
+          { x: 54, y: 100 },
+        ],
+      },
+    ],
+  };
+  const quality = inspectLayout(graph, false);
+  assert.ok(quality.issues.some((issue) => issue.code === 'edge-crossing'));
+  assert.ok(
+    quality.issues.some(
+      (issue) => issue.code === 'short-approach' && issue.ids.includes('vertical'),
+    ),
   );
+  assert.equal(quality.cost[2], 1);
+  assert.equal(quality.cost[3], 1);
 });
 
 test('real workflow corpus stays clear and deterministic in all four source directions', () => {

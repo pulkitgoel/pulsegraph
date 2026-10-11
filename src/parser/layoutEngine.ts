@@ -3,6 +3,7 @@ import {
   routeGroupBypasses,
   separateNodePorts,
   separateSharedSegments,
+  routeOrderedFanouts,
 } from '../lib/routeEdges.ts';
 import { computeLevels, findBackEdgeIds } from '../lib/graphLevels.ts';
 import { roleOf as resolveRole } from '../lib/roles.ts';
@@ -104,6 +105,15 @@ export function computeLayoutCandidate(graph: Graph, spacing = 0): Graph {
   g.setDefaultEdgeLabel(() => ({}));
 
   const isVertical = (graph.layout || 'LR') === 'TB' || graph.layout === 'BT';
+  const forwardCounts = new Map<string, number>();
+  const backEdgeIds = findBackEdgeIds(graph);
+  graph.edges
+    .filter((edge) => !backEdgeIds.has(edge.id))
+    .forEach((edge) => {
+      forwardCounts.set(edge.from, (forwardCounts.get(edge.from) ?? 0) + 1);
+    });
+  const balancedBranches =
+    !graph.groups?.length && [...forwardCounts.values()].some((count) => count >= 3);
   g.setGraph({
     rankdir: graph.layout || 'LR',
     marginx: 40,
@@ -113,9 +123,9 @@ export function computeLayoutCandidate(graph: Graph, spacing = 0): Graph {
     nodesep: (isVertical ? 38 : 42) + spacing,
     ranksep: (isVertical ? 70 : 60) + spacing,
     edgesep: 20,
-    // Align nodes to a consistent up-left grid so the layout looks symmetric
-    // rather than scattered.
-    align: 'UL',
+    // Centre ordinary fan-outs around their caller. Other diagrams retain
+    // the aligned grid used for groups and sequential journeys.
+    ...(balancedBranches ? {} : { align: 'UL' }),
   });
 
   // Uniform box sizes give the grid a clean, symmetric look (like a hand-drawn
@@ -159,11 +169,19 @@ export function computeLayoutCandidate(graph: Graph, spacing = 0): Graph {
   }
 
   // Detect back-edges (cycles) via DFS so dagre only sees a DAG
-  const backEdgeIds = findBackEdgeIds(graph);
-
   graph.edges.forEach((e) => {
     // Pass e.id as dagre's edge *name* (4th arg) — required for multigraphs.
-    if (!backEdgeIds.has(e.id)) g.setEdge(e.from, e.to, { id: e.id }, e.id);
+    if (!backEdgeIds.has(e.id))
+      g.setEdge(
+        e.from,
+        e.to,
+        {
+          id: e.id,
+          // Reserve a fork corridor without widening every rank in the chain.
+          minlen: balancedBranches && (forwardCounts.get(e.from) ?? 0) >= 3 ? 2 : 1,
+        },
+        e.id,
+      );
   });
 
   dagre.layout(g);
@@ -329,6 +347,9 @@ export function computeLayoutCandidate(graph: Graph, spacing = 0): Graph {
     positionedGroups,
     isVertical,
   );
+  if (!graph.groups?.length) {
+    positionedEdges = routeOrderedFanouts(positionedEdges, positionedNodes, isVertical);
+  }
 
   // Normalize coordinates so content starts at (PAD, PAD) with symmetric margins.
   // This removes dagre's leftover asymmetric margins and prevents back-edge curves

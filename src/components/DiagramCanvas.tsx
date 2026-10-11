@@ -645,7 +645,7 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
               refY="3"
               orient="auto"
             >
-              <polygon points="0 0,8 3,0 6" fill={isLight ? '#94A3B8' : '#334155'} />
+              <polygon points="0 0,8 3,0 6" fill={isLight ? '#64748B' : '#94A3B8'} />
             </marker>
           </defs>
 
@@ -698,7 +698,7 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
                     d={d}
                     data-dashed={edge.dashed || false}
                     fill="none"
-                    stroke={isLight ? '#CBD5E1' : '#1E293B'}
+                    stroke={isLight ? '#64748B' : '#94A3B8'}
                     strokeWidth={edge.thick ? 4 : 2}
                     strokeDasharray={edge.dashed ? '6 6' : undefined}
                     markerEnd={

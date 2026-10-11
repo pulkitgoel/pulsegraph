@@ -68,8 +68,76 @@ test('production and parallel labels clear nodes and unrelated paths in every or
       });
       expect(result.collisions, mode).toEqual([]);
       expect(result.labels).toBe(source === PRODUCTION_FLOW ? 1 : 3);
+      if (source === PRODUCTION_FLOW) {
+        const branches = await page.locator('#pulsegraph-svg').evaluate((svg) =>
+          ['e_5', 'e_6', 'e_7', 'e_8']
+            .map((id) => {
+              const path = svg.querySelector<SVGPathElement>(`#path-${id}`)!;
+              const length = path.getTotalLength();
+              const start = path.getPointAtLength(0),
+                end = path.getPointAtLength(length);
+              const approach = path.getPointAtLength(length - 24);
+              return {
+                sourceY: start.y,
+                targetY: end.y,
+                entryY: approach.y,
+                entryX: end.x - approach.x,
+              };
+            })
+            .sort((a, b) => a.targetY - b.targetY),
+        );
+        for (let i = 0; i < branches.length; i++) {
+          expect(Math.abs(branches[i].targetY - branches[i].entryY), mode).toBeLessThan(
+            0.1,
+          );
+          expect(branches[i].entryX, mode).toBeGreaterThan(23);
+          if (i)
+            expect(branches[i].sourceY, mode).toBeGreaterThan(branches[i - 1].sourceY);
+        }
+        await page.screenshot({
+          path: `test-results/repaired-production-${mode.toLowerCase()}.png`,
+        });
+      }
     }
   }
+});
+
+test('measured API Presentation avoids escaping over the whole request journey', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'production.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(
+      JSON.stringify({
+        version: 1,
+        source: PRODUCTION_FLOW,
+        roles: PRODUCTION_ROLES,
+        presentation: PRODUCTION_PRESENTATION,
+      }),
+    ),
+  });
+  await page.getByRole('button', { name: 'Presentation', exact: true }).click();
+  const route = await page.locator('#path-e_5').evaluate((element) => {
+    const path = element as SVGPathElement;
+    const start = path.getPointAtLength(0),
+      length = path.getTotalLength();
+    return {
+      startY: start.y,
+      minY: Math.min(
+        ...Array.from(
+          { length: Math.ceil(length / 4) + 1 },
+          (_, i) => path.getPointAtLength(Math.min(length, i * 4)).y,
+        ),
+      ),
+    };
+  });
+  expect(route.minY).toBeGreaterThanOrEqual(route.startY - 0.1);
+  await expect(page.locator('[data-slide-edges] path')).toHaveCount(8);
+  await expect(page.locator('[data-edge-label="true"] text')).toHaveText('logs');
+  await page.screenshot({ path: 'test-results/repaired-production-presentation.png' });
 });
 
 test('rejected AI composition keeps the visible slide, source, and undo history intact', async ({

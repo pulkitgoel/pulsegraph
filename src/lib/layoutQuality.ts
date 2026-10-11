@@ -10,12 +10,14 @@ export interface LayoutIssue {
     | 'label-overlap'
     | 'label-on-edge'
     | 'shared-route'
+    | 'edge-crossing'
+    | 'short-approach'
     | 'short-jog';
   ids: string[];
 }
 export interface LayoutQuality {
   issues: LayoutIssue[];
-  /** Compare in this order: correctness, ambiguity, small steps, bends, crossings, length, area. */
+  /** Compare correctness, ambiguous rails, short steps/approaches, crossings, bends, length, area. */
   cost: number[];
 }
 const EPS = 0.01;
@@ -119,6 +121,10 @@ export function inspectLayout(
       const distance = Math.hypot(b.x - a.x, b.y - a.y);
       length += distance;
       segments.push({ id: edge.id, a, b });
+      if (valid.length > 2 && i === valid.length - 1 && distance < 24) {
+        issues.push({ code: 'short-approach', ids: [edge.id] });
+        jogs++;
+      }
       if (i > 1) {
         const previous = valid[i - 2];
         if (
@@ -180,8 +186,10 @@ export function inspectLayout(
           t.a.x < Math.max(s.a.x, s.b.x) - EPS &&
           s.a.y > Math.min(t.a.y, t.b.y) + EPS &&
           s.a.y < Math.max(t.a.y, t.b.y) - EPS)
-      )
+      ) {
+        issues.push({ code: 'edge-crossing', ids: [s.id, t.id] });
         crossings++;
+      }
     }
   });
   const labelBoxes: (Box & { id: string })[] = [];
@@ -230,7 +238,7 @@ export function inspectLayout(
     ? (Math.max(...all.map((p) => p.x)) - Math.min(...all.map((p) => p.x))) *
       (Math.max(...all.map((p) => p.y)) - Math.min(...all.map((p) => p.y)))
     : 0;
-  return { issues, cost: [correctness, ambiguity, jogs, bends, crossings, length, area] };
+  return { issues, cost: [correctness, ambiguity, jogs, crossings, bends, length, area] };
 }
 
 export function compareLayoutQuality(a: LayoutQuality, b: LayoutQuality): number {

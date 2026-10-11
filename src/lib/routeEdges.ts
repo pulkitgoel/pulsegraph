@@ -250,11 +250,49 @@ export function separateNodePorts(edges: GraphEdge[], nodes: GraphNode[]): Graph
     );
     const span =
       uses[0].side === 'left' || uses[0].side === 'right' ? node?.height : node?.width;
+    // Port order must follow the neighbours' visual order, not Mermaid line
+    // order. Reversing this order crosses every branch close to the source.
+    const horizontal = uses[0].side === 'left' || uses[0].side === 'right';
+    uses.sort((a, b) => {
+      const neighbour = (use: PortUse) =>
+        nodes.find(
+          (candidate) =>
+            candidate.id ===
+            (use.end === 'source' ? edges[use.edgeIndex].to : edges[use.edgeIndex].from),
+        );
+      const first = neighbour(a),
+        second = neighbour(b);
+      return (
+        (horizontal ? (first?.y ?? 0) : (first?.x ?? 0)) -
+          (horizontal ? (second?.y ?? 0) : (second?.x ?? 0)) || a.edgeIndex - b.edgeIndex
+      );
+    });
     const spacing = Math.min(24, (span ?? 130) / (uses.length + 1));
+    const center = horizontal ? (node?.y ?? 0) : (node?.x ?? 0);
+    const positions = uses.map(
+      (_, index) => center + (index - (uses.length - 1) / 2) * spacing,
+    );
+    // Preserve an almost aligned connection when its straight entry still
+    // fits the node side and leaves room for the other ports.
     uses.forEach((use, index) => {
+      const edge = edges[use.edgeIndex];
+      const opposite = use.end === 'source' ? edge.points!.at(-1)! : edge.points![0];
+      const aligned = horizontal ? opposite.y : opposite.x;
+      if (
+        Math.abs(aligned - positions[index]) < 12 &&
+        Math.abs(aligned - center) <= (span ?? 130) / 2 - 8 &&
+        positions.every(
+          (position, other) => other === index || Math.abs(position - aligned) >= 8,
+        )
+      )
+        positions[index] = aligned;
+    });
+    uses.forEach((use, index) => {
+      const points = edges[use.edgeIndex].points!;
+      const endpoint = use.end === 'source' ? points[0] : points.at(-1)!;
       offsets.set(`${use.edgeIndex}:${use.end}`, {
         side: use.side,
-        value: (index - (uses.length - 1) / 2) * spacing,
+        value: positions[index] - (horizontal ? endpoint.y : endpoint.x),
       });
     });
   });
@@ -341,6 +379,96 @@ export function separateNodePorts(edges: GraphEdge[], nodes: GraphNode[]): Graph
     const candidate = { ...edge, points: adjusted };
     return routeCrossesNode(candidate, nodes) ? edge : candidate;
   });
+}
+
+/** Route an ordinary fan-out as ordered, nested elbows with clear arrow entries.
+ * The farthest branch turns first; nearer branches turn farther along the gap.
+ * Opposite halves may reuse a rail because their vertical runs do not overlap.
+ */
+export function routeOrderedFanouts(
+  edges: GraphEdge[],
+  nodes: GraphNode[],
+  vertical: boolean,
+): GraphEdge[] {
+  const result = edges.map((edge) => ({
+    ...edge,
+    points: edge.points?.map((point) => ({ ...point })),
+  }));
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const main = (point: Point) => (vertical ? point.y : point.x);
+  const cross = (point: Point) => (vertical ? point.x : point.y);
+  const point = (axis: number, side: number): Point =>
+    vertical ? { x: side, y: axis } : { x: axis, y: side };
+  for (const source of nodes) {
+    const branches = result.filter(
+      (edge) => edge.from === source.id && !edge.isBackEdge && edge.to !== source.id,
+    );
+    if (
+      branches.length < 2 ||
+      new Set(branches.map((edge) => edge.to)).size !== branches.length
+    )
+      continue;
+    if (branches.some((edge) => !edge.points?.length || !byId.has(edge.to))) continue;
+    const ends = branches.map((edge) => edge.points!.at(-1)!);
+    if (Math.max(...ends.map(main)) - Math.min(...ends.map(main)) > 0.5) continue;
+    const sourceMain = vertical ? source.y! : source.x!;
+    const sourceCross = vertical ? source.x! : source.y!;
+    const size = vertical ? source.height : source.width;
+    const sideSize = vertical ? source.width : source.height;
+    const direction = Math.sign(main(ends[0]) - sourceMain);
+    if (!direction) continue;
+    const startMain = sourceMain + (direction * size) / 2;
+    const gap = direction * (main(ends[0]) - startMain);
+    if (gap < 56) continue;
+    const ordered = [...branches].sort(
+      (a, b) => cross(a.points!.at(-1)!) - cross(b.points!.at(-1)!),
+    );
+    const spacing = Math.min(16, (sideSize - 16) / (ordered.length - 1));
+    const assigned = ordered.map((edge, index) => {
+      const startCross = sourceCross + (index - (ordered.length - 1) / 2) * spacing;
+      const end = edge.points!.at(-1)!;
+      return { edge, startCross, end, delta: cross(end) - startCross };
+    });
+    const proposals = assigned.map(({ edge, startCross, end, delta }) => {
+      if (Math.abs(delta) < 0.5)
+        return { ...edge, points: [point(startMain, startCross), end] };
+      const farther = assigned.filter(
+        (other) =>
+          Math.sign(other.delta) === Math.sign(delta) &&
+          Math.abs(other.delta) > Math.abs(delta) + 0.5,
+      ).length;
+      const railDistance = 24 + farther * 24;
+      if (railDistance > gap - 32) return null;
+      const rail = startMain + direction * railDistance;
+      return {
+        ...edge,
+        points: [
+          point(startMain, startCross),
+          point(rail, startCross),
+          point(rail, cross(end)),
+          end,
+        ],
+      };
+    });
+    if (proposals.some((edge) => !edge || routeCrossesNode(edge, nodes))) continue;
+    // Reject a replacement if it would occupy an unrelated connector's lane.
+    const unrelated = result
+      .filter((edge) => !branches.includes(edge))
+      .flatMap((edge) => segments(edge.points ?? []));
+    if (
+      proposals.some((edge) =>
+        segments(edge!.points!).some((segment) =>
+          unrelated.some((other) => sharedAxisLength(segment, other) > 0.5),
+        ),
+      )
+    )
+      continue;
+    for (const proposal of proposals) {
+      const target = result.find((edge) => edge.id === proposal!.id)!;
+      target.points = proposal!.points;
+    }
+  }
+  return result;
 }
 
 /** Reserve exterior lanes for forward edges that bypass a whole subgraph.
