@@ -490,7 +490,17 @@ test('delivery example preserves branch semantics and clear retry lanes in every
   }
 
   await page.getByRole('button', { name: 'Rich', exact: true }).click();
-  await page.getByRole('button', { name: 'Presentation', exact: true }).click();
+  const presentationButton = page.getByRole('button', {
+    name: 'Presentation',
+    exact: true,
+  });
+  await presentationButton.click();
+  // Rich and Presentation reuse the SVG and its labels. Those labels alone
+  // cannot prove that React has committed the requested layout yet.
+  await expect(presentationButton).toHaveAttribute('aria-pressed', 'true');
+  await expect(
+    page.getByRole('button', { name: 'Architecture preview · 16:9', exact: true }),
+  ).toBeVisible();
   await expect(page.locator('[data-edge-label="true"] text')).toContainText([
     'Yes',
     'No',
@@ -509,22 +519,28 @@ test('delivery example preserves branch semantics and clear retry lanes in every
       ),
     );
   expect(presentationLabelsAreTopmost).toBe(true);
-  const positions = await page.locator('#pulsegraph-svg').evaluate((svg) => {
-    const box = (id: string) =>
-      svg.querySelector(`#node-group-${id}`)!.getBoundingClientRect();
-    const center = (rect: DOMRect) => ({
-      x: rect.left + rect.width / 2,
-      y: rect.top + rect.height / 2,
+  const readPositions = () =>
+    page.locator('#pulsegraph-svg').evaluate((svg) => {
+      const box = (id: string) =>
+        svg.querySelector(`#node-group-${id}`)!.getBoundingClientRect();
+      const center = (rect: DOMRect) => ({
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      });
+      return {
+        build: center(box('D')),
+        deploy: center(box('E')),
+        fix: center(box('F')),
+      };
     });
-    return {
-      build: center(box('D')),
-      deploy: center(box('E')),
-      fix: center(box('F')),
-    };
-  });
-  expect(Math.abs(positions.build.y - positions.deploy.y)).toBeLessThan(2);
-  expect(Math.abs(positions.build.x - positions.fix.x)).toBeLessThan(2);
-  expect(positions.fix.y).toBeGreaterThan(positions.build.y + 40);
+  // The viewport also refits after the layout's dimensions change. Retry the
+  // same geometry requirements instead of taking a single transitional frame.
+  await expect(async () => {
+    const positions = await readPositions();
+    expect(Math.abs(positions.build.y - positions.deploy.y)).toBeLessThan(2);
+    expect(Math.abs(positions.build.x - positions.fix.x)).toBeLessThan(2);
+    expect(positions.fix.y).toBeGreaterThan(positions.build.y + 40);
+  }).toPass({ timeout: 10_000 });
   await expect.poll(retryClearsNodes).toBe(true);
   await page.screenshot({ path: 'test-results/delivery-presentation.png' });
   const presentationGif = await exportFile(page, 'Animated GIF');
