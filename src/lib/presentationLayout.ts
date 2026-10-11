@@ -4,6 +4,7 @@ import { presentationLabel } from './presentationLabel';
 
 type Point = { x: number; y: number };
 type Box = { left: number; right: number; top: number; bottom: number };
+export const PRESENTATION_EDGE_GAP = 24;
 export interface SlideLane extends PresentationLane {
   x: number;
   y: number;
@@ -36,14 +37,21 @@ const blocked = (a: Point, b: Point, box: Box) =>
       a.y < box.bottom &&
       Math.max(a.x, b.x) > box.left &&
       Math.min(a.x, b.x) < box.right;
-const overlap = (a: Point, b: Point, c: Point, d: Point) =>
-  a.x === b.x && c.x === d.x && a.x === c.x
-    ? Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y)) -
-      Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y))
-    : a.y === b.y && c.y === d.y && a.y === c.y
-      ? Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x)) -
-        Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x))
-      : 0;
+
+/** Crossings are sometimes necessary; parallel routes must have breathing room. */
+function crowded(a: Point, b: Point, c: Point, d: Point) {
+  if (a.x === b.x && c.x === d.x && Math.abs(a.x - c.x) < PRESENTATION_EDGE_GAP - 0.1)
+    return (
+      Math.min(Math.max(a.y, b.y), Math.max(c.y, d.y)) >
+      Math.max(Math.min(a.y, b.y), Math.min(c.y, d.y)) + 0.1
+    );
+  if (a.y === b.y && c.y === d.y && Math.abs(a.y - c.y) < PRESENTATION_EDGE_GAP - 0.1)
+    return (
+      Math.min(Math.max(a.x, b.x), Math.max(c.x, d.x)) >
+      Math.max(Math.min(a.x, b.x), Math.min(c.x, d.x)) + 0.1
+    );
+  return false;
+}
 
 function simplify(points: Point[]) {
   return points.filter(
@@ -71,11 +79,20 @@ function route(
   const ys = new Set([start.y, end.y, 114, 126, height - 62, height - 48]);
   for (const node of nodes) {
     const box = boxOf(node);
-    for (const offset of [14, 28, 42]) {
+    for (const offset of [24, 48, 72]) {
       xs.add(box.left - offset);
       xs.add(box.right + offset);
       ys.add(box.top - offset);
       ys.add(box.bottom + offset);
+    }
+  }
+  for (const [a, b] of used) {
+    if (a.x === b.x) {
+      xs.add(a.x - PRESENTATION_EDGE_GAP);
+      xs.add(a.x + PRESENTATION_EDGE_GAP);
+    } else {
+      ys.add(a.y - PRESENTATION_EDGE_GAP);
+      ys.add(a.y + PRESENTATION_EDGE_GAP);
     }
   }
   for (const box of headers) {
@@ -140,7 +157,7 @@ function route(
       const b = point(next),
         nextDirection = a.x === b.x ? 2 : 1;
       if (boxes.some((box) => blocked(a, b, box))) continue;
-      const shared = used.some(([c, d]) => overlap(a, b, c, d) > 0.1);
+      const shared = used.some(([c, d]) => crowded(a, b, c, d));
       if (shared) continue;
       const cost =
         current.cost +
@@ -157,16 +174,47 @@ function route(
   return null;
 }
 
+class PresentationRoutingError extends Error {}
+
 export function presentationLayout(
   source: Graph,
   plan: PresentationPlan,
 ): PresentationScene {
+  for (const spacing of [0, 32, 64, 96]) {
+    try {
+      return layoutSlide(source, plan, spacing);
+    } catch (error) {
+      if (!(error instanceof PresentationRoutingError) || spacing === 96) throw error;
+    }
+  }
+  throw new Error('Slide layout unavailable.');
+}
+
+function layoutSlide(
+  source: Graph,
+  plan: PresentationPlan,
+  spacing: number,
+): PresentationScene {
+  // A short journey and its alternatives belong in one semantic section. Use
+  // the validated reading path for the spine rather than source declaration order.
+  const compact =
+    plan.lanes.length === 1 &&
+    source.nodes.length <= 10 &&
+    plan.mainPath.length >= 3 &&
+    plan.mainPath.length <= 8 &&
+    source.nodes.length - plan.mainPath.length <= 3;
+  const branchIds = compact
+    ? plan.lanes[0].nodeIds.filter((id) => !plan.mainPath.includes(id))
+    : [];
   const rows = plan.lanes.flatMap((lane) => {
-    const count = Math.ceil(lane.nodeIds.length / 7);
+    if (compact) return [{ ...lane, nodeIds: [...plan.mainPath, ...branchIds] }];
+    const count = Math.ceil(lane.nodeIds.length / 8);
+    // Balance unavoidable wraps instead of leaving a single orphan at the end.
+    const perRow = Math.ceil(lane.nodeIds.length / count);
     return Array.from({ length: count }, (_, i) => ({
       ...lane,
       title: lane.title + (count > 1 ? ` · ${i + 1}/${count}` : ''),
-      nodeIds: lane.nodeIds.slice(i * 7, (i + 1) * 7),
+      nodeIds: lane.nodeIds.slice(i * perRow, (i + 1) * perRow),
     }));
   });
   const nodesById = new Map(source.nodes.map((node) => [node.id, node]));
@@ -177,28 +225,63 @@ export function presentationLayout(
   );
   const height = Math.max(
       900,
-      rowHeights.reduce((sum, h) => sum + h + 84, 220),
+      rowHeights.reduce((sum, h) => sum + h + 84 + spacing, 220 + spacing * 2) +
+        (branchIds.length ? rowHeights[0] + 84 + spacing : 0),
+      ((320 +
+        (Math.max(
+          ...rows.map((lane) => (compact ? plan.mainPath.length : lane.nodeIds.length)),
+        ) -
+          1) *
+          208) *
+        9) /
+        16,
     ),
     width = (height * 16) / 9;
   const nodes: GraphNode[] = [];
   const nodeRows = new Map<string, number>();
-  let nextTop = 152;
+  const branchColumns = new Set<number>();
+  let nextTop = 152 + spacing;
   const lanes = rows.map((lane, row): SlideLane => {
     const top = nextTop;
-    nextTop += rowHeights[row] + 84;
+    nextTop += rowHeights[row] + 84 + spacing;
     lane.nodeIds.forEach((id, index) => {
       const node = nodesById.get(id)!;
       const nodeHeight = presentationLabel(node.label).height;
-      nodeRows.set(id, row);
+      const branchIndex = branchIds.indexOf(id);
+      const branch = compact && branchIndex >= 0;
+      const columns = compact ? plan.mainPath.length : lane.nodeIds.length;
+      let column = index;
+      if (branch) {
+        // Place alternatives after their main-path caller; reserve distinct slots.
+        const caller = source.edges.find(
+          (edge) => edge.to === id && plan.mainPath.includes(edge.from),
+        );
+        const desired = caller ? plan.mainPath.indexOf(caller.from) + 1 : branchIndex + 1;
+        column = Array.from({ length: columns }, (_, i) => i)
+          .filter((i) => !branchColumns.has(i))
+          .sort((a, b) => Math.abs(a - desired) - Math.abs(b - desired))[0];
+        branchColumns.add(column);
+      }
+      nodeRows.set(id, row + (branch ? 0.5 : 0));
       nodes.push({
         ...node,
         width: 144,
         height: nodeHeight,
-        x: 160 + index * ((width - 320) / Math.max(1, lane.nodeIds.length - 1)),
-        y: top + 30 + nodeHeight / 2,
+        x:
+          160 +
+          spacing +
+          column * ((width - 320 - spacing * 2) / Math.max(1, columns - 1)),
+        y: top + 30 + nodeHeight / 2 + (branch ? rowHeights[row] + 84 + spacing : 0),
       });
     });
-    return { ...lane, x: 64, y: top, width: width - 128, height: rowHeights[row] + 38 };
+    return {
+      ...lane,
+      x: 64,
+      y: top,
+      width: width - 128,
+      height:
+        rowHeights[row] + 38 + (branchIds.length ? rowHeights[row] + 84 + spacing : 0),
+    };
   });
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const headers = lanes.map((lane) => ({
@@ -257,7 +340,8 @@ export function presentationLayout(
       box = boxOf(node);
     const list = ports.get(`${id}:${side}`)!;
     const offset =
-      (list.indexOf(edgeKey) - (list.length - 1) / 2) * Math.min(18, 100 / list.length);
+      (list.indexOf(edgeKey) - (list.length - 1) / 2) *
+      Math.min(PRESENTATION_EDGE_GAP, 100 / list.length);
     const gap = target ? 7 : 0;
     const tip =
       side === 'left'
@@ -280,6 +364,18 @@ export function presentationLayout(
   const warnings: string[] = [];
   const used: [Point, Point][] = [];
   const routed = new Map<string, GraphEdge>();
+  const attachments = new Map(
+    source.edges.map((edge) => {
+      const side = sides.get(edge.id)!;
+      return [
+        edge.id,
+        {
+          a: port(edge.from, side.from, `${edge.id}:from`, false),
+          b: port(edge.to, side.to, `${edge.id}:to`, true),
+        },
+      ];
+    }),
+  );
   // Short adjacent routes get their straight corridor first.
   const ordered = [...source.edges].sort((a, b) => {
     const length = (edge: GraphEdge) =>
@@ -288,23 +384,40 @@ export function presentationLayout(
     return length(a) - length(b);
   });
   for (const edge of ordered) {
-    const side = sides.get(edge.id)!;
-    const a = port(edge.from, side.from, `${edge.id}:from`, false),
-      b = port(edge.to, side.to, `${edge.id}:to`, true);
-    const path = route(a.stub, b.stub, nodes, used, width, height, headers);
+    const { a, b } = attachments.get(edge.id)!;
+    // Reserve every connector's approach before routing, not only earlier edges.
+    const reserved: [Point, Point][] = [...attachments]
+      .filter(([id]) => id !== edge.id)
+      .flatMap(
+        ([, { a, b }]) =>
+          [
+            [a.tip, a.stub],
+            [b.stub, b.tip],
+          ] as [Point, Point][],
+      );
+    const path = route(
+      a.stub,
+      b.stub,
+      nodes,
+      [...used, ...reserved],
+      width,
+      height,
+      headers,
+    );
     if (!path)
-      throw new Error(
+      throw new PresentationRoutingError(
         'This diagram needs more routing space for the slide preview. The previous layout is still available.',
+        { cause: edge.id },
       );
     const points = simplify([a.tip, ...path, b.tip]);
     if (
       points
         .slice(1)
         .some((point, index) =>
-          used.some(([c, d]) => overlap(points[index], point, c, d) > 0.1),
+          used.some(([c, d]) => crowded(points[index], point, c, d)),
         )
     )
-      throw new Error(
+      throw new PresentationRoutingError(
         'This composition needs more space for separate connector ports. Try Recompose with AI or Previous layout.',
       );
     points.slice(1).forEach((point, index) => used.push([points[index], point]));
@@ -345,7 +458,7 @@ export function presentationLayout(
       labels[edge.id] = location;
       placed.push(labelBox(location));
     } else {
-      throw new Error(
+      throw new PresentationRoutingError(
         'This composition needs more space for readable edge labels. Try Recompose with AI or Previous layout.',
       );
     }

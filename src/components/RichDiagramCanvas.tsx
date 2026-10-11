@@ -1244,7 +1244,7 @@ export function RichDiagramCanvas({
         repeat: -1,
         ease: 'power1.inOut',
       });
-      gsap.fromTo(
+      animate.fromTo(
         '.scan-line',
         { y: -10, opacity: 0 },
         {
@@ -1261,7 +1261,7 @@ export function RichDiagramCanvas({
           ],
         },
       );
-      gsap.fromTo(
+      animate.fromTo(
         '.data-flow',
         { x: -5, opacity: 0 },
         {
@@ -1285,7 +1285,7 @@ export function RichDiagramCanvas({
         repeat: -1,
         transformOrigin: 'center',
       });
-      gsap.fromTo(
+      animate.fromTo(
         '.robot-body-dance',
         { y: 0, rotation: 0 },
         {
@@ -1298,7 +1298,7 @@ export function RichDiagramCanvas({
           transformOrigin: 'center bottom',
         },
       );
-      gsap.fromTo(
+      animate.fromTo(
         '.robot-arm-l',
         { y: 0, rotation: 0 },
         {
@@ -1311,7 +1311,7 @@ export function RichDiagramCanvas({
           transformOrigin: '3.5px 12px',
         },
       );
-      gsap.fromTo(
+      animate.fromTo(
         '.robot-arm-r',
         { y: 0, rotation: 0 },
         {
@@ -1339,7 +1339,7 @@ export function RichDiagramCanvas({
         ease: 'sine.inOut',
         transformOrigin: 'top center',
       });
-      gsap.fromTo(
+      animate.fromTo(
         '.bar-grow',
         { scaleY: 0.55 },
         {

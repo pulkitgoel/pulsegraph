@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { parseDiagram } from '../src/services/llmValidation';
 import {
   validatePresentationPlan,
+  validateAiPresentationPlan,
   localPresentationPlan,
 } from '../src/lib/presentationPlan';
 import { presentationLayout } from '../src/lib/presentationLayout';
@@ -19,7 +20,140 @@ import {
   serializeDocument,
 } from '../src/lib/document';
 import { RESEARCH_FLOW } from './fixtures/researchFlow';
+import {
+  LIVE_RESEARCH_FLOW,
+  LIVE_RESEARCH_DUPLICATE_PLAN,
+} from './fixtures/liveAiResearch';
 import { RESEARCH_ROLES, RESEARCH_PRESENTATION } from './fixtures/researchPresentation';
+import {
+  INCIDENT_FLOW,
+  INCIDENT_PRESENTATION,
+  INCIDENT_ROLES,
+} from './fixtures/incidentPresentation';
+
+test('real AI duplicate path and group sections normalize without changing topology', () => {
+  const graph = parseDiagram(LIVE_RESEARCH_FLOW);
+  const before = JSON.stringify({ graph, plan: LIVE_RESEARCH_DUPLICATE_PLAN });
+  assert.throws(() => validatePresentationPlan(LIVE_RESEARCH_DUPLICATE_PLAN, graph));
+  const plan = validateAiPresentationPlan(LIVE_RESEARCH_DUPLICATE_PLAN, graph);
+  assert.equal(plan.mainPath.at(-1), 'GetResult');
+  assert.equal(new Set(plan.mainPath).size, plan.mainPath.length);
+  assert.deepEqual(plan.lanes[1].nodeIds, ['Search', 'Summarize', 'Writer', 'Critic']);
+  assert.equal(plan.lanes[0].nodeIds.includes('Search'), false);
+  assert.equal(plan.lanes.flatMap((lane) => lane.nodeIds).length, 16);
+  const scene = presentationLayout(graph, plan);
+  assert.equal(scene.graph.nodes.length, 16);
+  assert.equal(scene.graph.edges.length, 24);
+  for (const edge of scene.graph.edges)
+    assert.ok(!routeCrossesNode(edge, scene.graph.nodes));
+  assert.equal(JSON.stringify({ graph, plan: LIVE_RESEARCH_DUPLICATE_PLAN }), before);
+});
+
+test('AI normalization still rejects invented edges, missing nodes and ambiguous sections', () => {
+  const graph = parseDiagram(LIVE_RESEARCH_FLOW);
+  const clone = () => structuredClone(LIVE_RESEARCH_DUPLICATE_PLAN);
+  const inventedEdge = clone();
+  inventedEdge.mainPath = ['User', 'TensorZero', 'User'];
+  const missingNode = clone();
+  missingNode.lanes.pop();
+  const unknownNode = clone();
+  unknownNode.lanes[2].nodeIds.push('Invented');
+  const middleCycle = clone();
+  middleCycle.mainPath = ['User', 'FastAPI', 'Guardrail', 'User', 'GetResult'];
+  const unrelatedDuplicate = clone();
+  unrelatedDuplicate.lanes[2].nodeIds.push('Store');
+  const ambiguousGroup = clone();
+  ambiguousGroup.lanes.push(structuredClone(ambiguousGroup.lanes[1]));
+  const invalidDiscardedLane = clone();
+  invalidDiscardedLane.lanes[0] = {
+    title: '<script>invalid</script>',
+    kind: 'journey',
+    nodeIds: ['Search', 'Summarize', 'Writer', 'Critic'],
+  };
+  for (const plan of [
+    inventedEdge,
+    missingNode,
+    unknownNode,
+    middleCycle,
+    unrelatedDuplicate,
+    ambiguousGroup,
+    invalidDiscardedLane,
+  ])
+    assert.throws(() => validateAiPresentationPlan(plan, graph));
+});
+
+test('AI normalization leaves valid plans unchanged and rejects split source groups', () => {
+  const graph = parseDiagram(RESEARCH_FLOW);
+  assert.deepEqual(
+    validateAiPresentationPlan(RESEARCH_PRESENTATION, graph),
+    RESEARCH_PRESENTATION,
+  );
+  const liveGraph = parseDiagram(LIVE_RESEARCH_FLOW);
+  const split = validateAiPresentationPlan(LIVE_RESEARCH_DUPLICATE_PLAN, liveGraph);
+  split.lanes[1].nodeIds = ['Search', 'Summarize', 'Writer'];
+  split.lanes[2].nodeIds.push('Critic');
+  assert.throws(() => validateAiPresentationPlan(split, liveGraph));
+});
+
+test('role-only small process keeps its branch and terminal result in the journey', () => {
+  const graph = parseDiagram(INCIDENT_FLOW);
+  const plan = localPresentationPlan(graph, { ...INCIDENT_ROLES, H: 'output' });
+  assert.equal(plan.lanes.length, 1);
+  assert.equal(plan.lanes[0].nodeIds.length, 8);
+  const scene = presentationLayout(graph, plan);
+  assert.equal(scene.lanes.length, 1);
+  assert.equal(scene.graph.edges.length, 9);
+});
+
+test('small incident journey stays in one section with its branch below the spine', () => {
+  const graph = parseDiagram(INCIDENT_FLOW);
+  const before = JSON.stringify(graph);
+  const scene = presentationLayout(graph, INCIDENT_PRESENTATION);
+  assert.equal(scene.lanes.length, 1);
+  assert.equal(scene.graph.nodes.length, 8);
+  assert.equal(scene.graph.edges.length, 9);
+  const byId = new Map(scene.graph.nodes.map((node) => [node.id, node]));
+  const spine = INCIDENT_PRESENTATION.mainPath.map((id) => byId.get(id)!);
+  assert.ok(spine.every((node) => node.y === spine[0].y));
+  assert.ok(spine.slice(1).every((node, index) => node.x! > spine[index].x!));
+  assert.ok(byId.get('E')!.y! > byId.get('C')!.y! + 140);
+  for (const edge of scene.graph.edges)
+    assert.ok(!routeCrossesNode(edge, scene.graph.nodes));
+  const segments = scene.graph.edges.flatMap((edge) =>
+    edge.points!.slice(1).map((b, i) => ({ id: edge.id, a: edge.points![i], b })),
+  );
+  for (const a of segments)
+    for (const b of segments) {
+      if (a.id === b.id) continue;
+      for (const axis of ['x', 'y'] as const) {
+        const other = axis === 'x' ? 'y' : 'x';
+        if (a.a[axis] !== a.b[axis] || b.a[axis] !== b.b[axis]) continue;
+        const overlap =
+          Math.min(Math.max(a.a[other], a.b[other]), Math.max(b.a[other], b.b[other])) -
+          Math.max(Math.min(a.a[other], a.b[other]), Math.min(b.a[other], b.b[other]));
+        if (overlap > 0.1)
+          assert.ok(
+            Math.abs(a.a[axis] - b.a[axis]) >= 23.9,
+            `${a.id}/${b.id} run too close`,
+          );
+      }
+    }
+  assert.equal(JSON.stringify(graph), before);
+});
+
+test('eight sequential steps fit together and larger wraps do not orphan one step', () => {
+  for (const count of [8, 9, 17]) {
+    const ids = Array.from({ length: count }, (_, i) => `N${i}`);
+    const graph = parseDiagram(`flowchart LR\n${ids.join(' --> ')}`);
+    const scene = presentationLayout(graph, {
+      title: 'Sequence',
+      mainPath: ids,
+      lanes: [{ title: 'Sequence', kind: 'journey', nodeIds: ids }],
+    });
+    if (count === 8) assert.equal(scene.lanes.length, 1);
+    assert.ok(scene.lanes.every((lane) => lane.nodeIds.length > 1));
+  }
+});
 
 test('Novation flow preserves full long labels and routes around their expanded bounds', () => {
   const graph = parseDiagram(NOVATION_FLOW);

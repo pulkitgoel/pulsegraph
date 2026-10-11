@@ -135,13 +135,11 @@ function parseNodeToken(
     if (!nodeMap.has(rawId)) {
       nodeMap.set(rawId, { id: rawId, label: label || rawId, type, width: 0, height: 0 });
     } else {
-      // A plain reference may have been created first (e.g. `B --> C` before
-      // `B{Question}`); upgrade it with the richer label/shape info.
+      // Explicit definitions replace earlier text/shape (Mermaid's last
+      // definition wins). Plain references below never erase that definition.
       const existing = nodeMap.get(rawId)!;
-      if (label && (!existing.label || existing.label === existing.id)) {
-        existing.label = label;
-        existing.type = type;
-      }
+      existing.label = label || rawId;
+      existing.type = type;
     }
     return rawId;
   }

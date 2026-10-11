@@ -12,7 +12,7 @@ Connect DeepSeek or local Ollama when you want to describe changes in plain Engl
 
 ## Features
 
-- Responsive landing page with a real Rich-mode GIF exported by PulseGraph, working examples, and light/dark themes.
+- Responsive landing page with a real Rich-mode GIF exported by PulseGraph, a one-click Mermaid starter, editable examples, light/dark themes, and privacy/export FAQs. The demo opens its source in the editor and provides pause, reduced-motion, and failed-image static previews.
 - Classic and Rich SVG styles with moving dots; Flow style with moving segments and rounded connectors. All three preserve directed arrowheads.
 - Direct Mermaid editing, mouse/touch pan, keyboard zoom, and Play/Pause.
 - Local draft recovery, 20-step undo/redo, source import, editable JSON import/export.
@@ -100,11 +100,18 @@ The architecture preview is an initial prototype alongside the previous layout.
 AI proposes section names, membership and reading order—not replacement nodes,
 connections or coordinates. Validation preserves every source node and edge, keeps
 source subgraphs together, and checks that the main journey follows real connections.
+Live AI responses can repeat a closing return node or duplicate source-group members
+in a broad journey and their dedicated group section. These unambiguous metadata
+duplicates are normalized before strict validation. Missing/unknown nodes, invented
+connections and ambiguous group assignments still fail; the source is never rewritten.
 The renderer places components in horizontal bands and reserves separate connector
 corridors. If it cannot place routes or labels safely, it reports the limitation
 instead of silently drawing overlapping routes. Large diagrams can require more
-rows; this reduces readability on a single slide. Component labels over four wrapped
-lines require shortening or switching back to the previous layout.
+rows; this reduces readability on a single slide. Small process flows stay in one
+semantic section, with alternatives below the main journey. Larger rows wrap in
+balanced groups rather than leaving a final node alone. Parallel connector rails
+reserve at least 24 SVG units of separation. Component labels wrap completely,
+and their bounds grow to keep text inside the component.
 
 **Previous layout** restores the existing role-based view. Older saved diagrams
 can open **Architecture preview · 16:9** with a clearly labelled local composition,
@@ -142,6 +149,9 @@ Supported: LR/RL/TB/TD/BT directions, chains, multi-node ampersand shorthand,
 quoted labels, semicolon-separated statements, pipe/inline edge labels, dashed,
 thick, open, cross and circle edges, and nested subgraphs.
 Use `<br/>` inside a label for a line break.
+Repeated explicit node definitions use the latest label and shape; plain node
+references retain them. AI refinement comparisons preserve case-sensitive IDs and
+labels, while rejecting changes that only reformat the same parsed diagram.
 
 | Shape                       | Node treatment |
 | --------------------------- | -------------- |
@@ -162,8 +172,8 @@ suffixes are ignored; bidirectional arrows are not supported.
 
 Limits: 30,000 source characters, 100 nodes, 300 edges and 100 KB imported
 documents. Dense graphs can remain hard to read; split them into smaller views.
-Presentation labels may be shortened to fit cards; original labels stay in the
-source and editable document.
+Presentation previews preserve full labels; very long labels and dense graphs
+can reduce readability when scaled to a single slide.
 
 ## Privacy and security
 

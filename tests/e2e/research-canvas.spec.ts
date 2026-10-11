@@ -122,31 +122,35 @@ test('research flow is complete and readable on the live canvas', async ({ page 
 test('boxes glow only after their incoming marker arrives on the live canvas', async ({
   page,
 }) => {
+  // Real-time setup may already include an arrival on short links. Control
+  // frames instead of assuming a fixed wall-clock wait is always pre-arrival.
+  await page.clock.install();
   await page.goto('/');
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
   await page.locator('input[type="file"]').setInputFiles({
     name: 'arrival.mmd',
     mimeType: 'text/plain',
     buffer: Buffer.from('flowchart LR\n A[Source] --> B[Target]'),
   });
-  for (const mode of ['Rich', 'Classic']) {
+  for (const mode of ['Classic', 'Rich']) {
     await page.getByRole('button', { name: mode, exact: true }).click();
-    await page.waitForTimeout(1800);
-    const observation = await page.locator('#pulsegraph-svg').evaluate(async (svg) => {
+    await page.clock.runFor(100);
+    const recording = page.locator('#pulsegraph-svg').evaluate(async (svg) => {
       const path = svg.querySelector<SVGPathElement>('[id^="path-"]')!;
       const pulse = svg.querySelector<SVGGraphicsElement>('[id^="pulse-"]')!;
       const glow = svg.querySelector<SVGGraphicsElement>('#glow-B')!;
       const sourceGlow = svg.querySelector<SVGGraphicsElement>('#glow-A')!;
-      const point = path
-        .getPointAtLength(path.getTotalLength())
-        .matrixTransform(path.getScreenCTM()!);
+      const endpoint = path.getPointAtLength(path.getTotalLength());
       let previousDistance = Infinity;
       let previousOpacity = Number(getComputedStyle(glow).opacity);
       const initialOpacity = previousOpacity;
       const arrivals: number[] = [];
       let sourceEverGlows = false;
-      const deadline = performance.now() + 4000;
+      const deadline = performance.now() + 6000;
+      svg.setAttribute('data-arrival-recording', 'true');
       await new Promise<void>((resolve) => {
         const frame = () => {
+          const point = endpoint.matrixTransform(path.getScreenCTM()!);
           const rect = pulse.getBoundingClientRect();
           const distance = Math.hypot(
             rect.x + rect.width / 2 - point.x,
@@ -164,12 +168,19 @@ test('boxes glow only after their incoming marker arrives on the live canvas', a
         requestAnimationFrame(frame);
       });
       const scale = Math.hypot(path.getScreenCTM()!.a, path.getScreenCTM()!.b);
+      svg.removeAttribute('data-arrival-recording');
       return {
         initialOpacity,
         sourceEverGlows,
         arrivals: arrivals.map((value) => value / scale),
       };
     });
+    await expect(page.locator('#pulsegraph-svg')).toHaveAttribute(
+      'data-arrival-recording',
+      'true',
+    );
+    await page.clock.runFor(6100);
+    const observation = await recording;
     expect(observation.initialOpacity).toBe(0);
     expect(observation.sourceEverGlows).toBe(false);
     expect(observation.arrivals.length).toBeGreaterThan(0);

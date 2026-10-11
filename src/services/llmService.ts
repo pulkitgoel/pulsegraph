@@ -1,7 +1,10 @@
 import type { ChatMessage, Graph, LlmProvider, OllamaModel } from '../types';
 import { looksLikeMermaid } from '../parser/mermaidParser';
 import { validateRoles } from '../lib/roles';
-import { validatePresentationPlan, type PresentationPlan } from '../lib/presentationPlan';
+import {
+  validateAiPresentationPlan,
+  type PresentationPlan,
+} from '../lib/presentationPlan';
 import { requestCompletion } from './llmClient';
 import { GENERATE_DIAGRAM_PROMPT, PRESENTATION_ROLES_PROMPT } from './llmPrompts';
 import { parseDiagram } from './llmValidation';
@@ -19,8 +22,27 @@ export interface SendMessageResult {
 
 type ProgressCallback = (step: 'generating' | 'validating' | 'rendering') => void;
 
-function comparableSource(source: string): string {
-  return source.replace(/\s+/g, ' ').trim().toLowerCase();
+function diagramSignature(graph: Graph): string {
+  // Compare parsed content, not lowercased source: IDs and label text are
+  // case-sensitive, and whitespace inside labels can be intentional.
+  return JSON.stringify({
+    layout: graph.layout,
+    nodes: graph.nodes.map(({ id, label, type, color }) => ({ id, label, type, color })),
+    edges: graph.edges.map(({ from, to, label, dashed, arrow, thick }) => ({
+      from,
+      to,
+      label,
+      dashed,
+      arrow,
+      thick,
+    })),
+    groups: graph.groups?.map(({ id, label, members, parentId }) => ({
+      id,
+      label,
+      members,
+      parentId,
+    })),
+  });
 }
 
 /** Direct Mermaid stays local; natural-language requests use one AI call. */
@@ -35,6 +57,7 @@ export async function sendMessage(
   signal?: AbortSignal,
 ): Promise<SendMessageResult> {
   let source = userMessage.trim();
+  let refinedSource: string | undefined;
 
   if (!looksLikeMermaid(source)) {
     onStep?.('generating');
@@ -75,15 +98,19 @@ export async function sendMessage(
       };
     }
 
-    if (currentSource && comparableSource(source) === comparableSource(currentSource)) {
-      throw new Error(
-        'The AI returned the current diagram without applying your instruction. Try again or make the change in Edit source.',
-      );
-    }
+    refinedSource = currentSource;
   }
 
   onStep?.('validating');
   const graph = parseDiagram(source);
+  if (
+    refinedSource &&
+    diagramSignature(graph) === diagramSignature(parseDiagram(refinedSource))
+  ) {
+    throw new Error(
+      'The AI returned the current diagram without applying your instruction. Try again or make the change in Edit source.',
+    );
+  }
   onStep?.('rendering');
 
   return {
@@ -114,8 +141,16 @@ export async function designPresentation(
   const response = await requestCompletion({
     systemPrompt: PRESENTATION_ROLES_PROMPT,
     content: JSON.stringify({
-      nodes: graph.nodes.map(({ id, label }) => ({ id, label })),
-      edges: graph.edges.map(({ id, from, to, label }) => ({ id, from, to, label })),
+      nodes: graph.nodes.map(({ id, label, type }) => ({ id, label, type })),
+      edges: graph.edges.map(({ id, from, to, label, arrow, dashed, thick }) => ({
+        id,
+        from,
+        to,
+        label,
+        arrow,
+        dashed,
+        thick,
+      })),
       groups: graph.groups?.map(({ id, label, members, parentId }) => ({
         id,
         label,
@@ -136,7 +171,7 @@ export async function designPresentation(
   const presentation =
     response.presentation == null
       ? undefined
-      : validatePresentationPlan(response.presentation, graph);
+      : validateAiPresentationPlan(response.presentation, graph);
   onStep?.('rendering');
 
   return {
