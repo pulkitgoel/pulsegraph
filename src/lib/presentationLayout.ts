@@ -1,6 +1,7 @@
 import type { Graph, GraphEdge, GraphNode } from '../types';
 import type { PresentationPlan, PresentationLane } from './presentationPlan';
 import { presentationLabel } from './presentationLabel';
+import { presentationIconBox, type PresentationIconBounds } from './presentationIcon';
 
 type Point = { x: number; y: number };
 type Box = { left: number; right: number; top: number; bottom: number };
@@ -188,10 +189,11 @@ class PresentationRoutingError extends Error {}
 export function presentationLayout(
   source: Graph,
   plan: PresentationPlan,
+  iconBounds: Record<string, PresentationIconBounds> = {},
 ): PresentationScene {
   for (const spacing of [0, 32, 64, 96]) {
     try {
-      return layoutSlide(source, plan, spacing);
+      return layoutSlide(source, plan, spacing, iconBounds);
     } catch (error) {
       if (!(error instanceof PresentationRoutingError) || spacing === 96) throw error;
     }
@@ -203,6 +205,7 @@ function layoutSlide(
   source: Graph,
   plan: PresentationPlan,
   spacing: number,
+  iconBounds: Record<string, PresentationIconBounds>,
 ): PresentationScene {
   // A short journey and its alternatives belong in one semantic section. Use
   // the validated reading path for the spine rather than source declaration order.
@@ -299,7 +302,9 @@ function layoutSlide(
     top: lane.y + 4,
     bottom: lane.y + 30,
   }));
-  type Side = 'left' | 'right' | 'top' | 'bottom';
+  // Labels occupy the area below each glyph. Use a side approach for upward
+  // returns and downward branches instead of a disconnected label-bottom port.
+  type Side = 'left' | 'right' | 'top';
   const sides = new Map<string, { from: Side; to: Side }>();
   const ports = new Map<string, string[]>();
   const register = (node: string, side: Side, edge: string) => {
@@ -318,7 +323,9 @@ function layoutSlide(
             ? 'right'
             : 'top'
           : b.y! > a.y!
-            ? 'bottom'
+            ? b.x! < a.x!
+              ? 'left'
+              : 'right'
             : 'top';
     let to: Side =
       edge.from === edge.to
@@ -329,7 +336,9 @@ function layoutSlide(
             : 'top'
           : b.y! > a.y!
             ? 'top'
-            : 'bottom';
+            : a.x! < b.x!
+              ? 'left'
+              : 'right';
     const nearHeader = (node: GraphNode) =>
       headers.some(
         (box) =>
@@ -340,34 +349,73 @@ function layoutSlide(
       );
     if (from === 'top' && nearHeader(a)) from = 'left';
     if (to === 'top' && nearHeader(b)) to = 'left';
-    sides.set(edge.id, { from, to });
+    const availableSide = (node: GraphNode, wanted: Side): Side => {
+      const icon = presentationIconBox(node, iconBounds[node.id]);
+      const alternatives: Side[] = [
+        wanted,
+        wanted === 'left' ? 'right' : 'left',
+        'top',
+        'right',
+      ];
+      for (const side of [...new Set(alternatives)]) {
+        if (side === 'top' && nearHeader(node)) continue;
+        const size = side === 'top' ? icon.right - icon.left : icon.bottom - icon.top;
+        const capacity = Math.max(1, Math.floor((size - 8) / PRESENTATION_EDGE_GAP) + 1);
+        if ((ports.get(`${node.id}:${side}`)?.length ?? 0) < capacity) return side;
+      }
+      throw new PresentationRoutingError(
+        'This composition needs more space for separate connector ports. Try Recompose with AI or Previous layout.',
+      );
+    };
+    from = availableSide(a, from);
     register(edge.from, from, `${edge.id}:from`);
+    to = availableSide(b, to);
     register(edge.to, to, `${edge.id}:to`);
+    sides.set(edge.id, { from, to });
   }
-  const port = (id: string, side: Side, edgeKey: string, target: boolean) => {
+  // Side ports follow the other endpoint's vertical order. A lower branch
+  // must leave below the straight journey, not loop above it to escape a port.
+  const edgeById = new Map(source.edges.map((edge) => [edge.id, edge]));
+  for (const [key, list] of ports) {
+    const side = key.slice(key.lastIndexOf(':') + 1);
+    const coordinate = (edgeKey: string) => {
+      const split = edgeKey.lastIndexOf(':');
+      const edge = edgeById.get(edgeKey.slice(0, split))!;
+      const other = byId.get(edgeKey.slice(split + 1) === 'from' ? edge.to : edge.from)!;
+      const icon = presentationIconBox(other, iconBounds[other.id]);
+      return side === 'top' ? (icon.left + icon.right) / 2 : (icon.top + icon.bottom) / 2;
+    };
+    list.sort((a, b) => coordinate(a) - coordinate(b));
+  }
+  const port = (id: string, side: Side, edgeKey: string) => {
     const node = byId.get(id)!,
       box = boxOf(node);
     const list = ports.get(`${id}:${side}`)!;
     const offset =
       (list.indexOf(edgeKey) - (list.length - 1) / 2) *
       Math.min(PRESENTATION_EDGE_GAP, 100 / list.length);
-    const gap = target ? 7 : 0;
+    const icon = presentationIconBox(node, iconBounds[id]);
+    const center = { x: (icon.left + icon.right) / 2, y: (icon.top + icon.bottom) / 2 };
+    const gap = 3;
+    const diamond = node.type === 'gateway';
+    const inset = diamond
+      ? Math.abs(offset) *
+        (side === 'top'
+          ? (icon.bottom - icon.top) / (icon.right - icon.left)
+          : (icon.right - icon.left) / (icon.bottom - icon.top))
+      : 0;
     const tip =
       side === 'left'
-        ? { x: node.x! - 36 - gap, y: box.top + 43 + offset }
+        ? { x: icon.left + inset - gap, y: center.y + offset }
         : side === 'right'
-          ? { x: node.x! + 36 + gap, y: box.top + 43 + offset }
-          : side === 'top'
-            ? { x: node.x! + offset, y: box.top + 16 - gap }
-            : { x: node.x! + offset, y: box.bottom + gap };
+          ? { x: icon.right - inset + gap, y: center.y + offset }
+          : { x: center.x + offset, y: icon.top + inset - gap };
     const stub =
       side === 'left'
         ? { ...tip, x: box.left - 18 }
         : side === 'right'
           ? { ...tip, x: box.right + 18 }
-          : side === 'top'
-            ? { ...tip, y: box.top - 18 }
-            : { ...tip, y: box.bottom + 18 };
+          : { ...tip, y: box.top - 18 };
     return { tip, stub };
   };
   const warnings: string[] = [];
@@ -379,8 +427,8 @@ function layoutSlide(
       return [
         edge.id,
         {
-          a: port(edge.from, side.from, `${edge.id}:from`, false),
-          b: port(edge.to, side.to, `${edge.id}:to`, true),
+          a: port(edge.from, side.from, `${edge.id}:from`),
+          b: port(edge.to, side.to, `${edge.id}:to`),
         },
       ];
     }),
@@ -431,6 +479,7 @@ function layoutSlide(
     )
       throw new PresentationRoutingError(
         'This composition needs more space for separate connector ports. Try Recompose with AI or Previous layout.',
+        { cause: edge.id },
       );
     points.slice(1).forEach((point, index) => used.push([points[index], point]));
     routed.set(edge.id, { ...edge, points });
@@ -438,12 +487,38 @@ function layoutSlide(
   const edges = source.edges.map((edge) => routed.get(edge.id)!);
   const labels: Record<string, Point> = Object.create(null) as Record<string, Point>;
   const placed: Box[] = [];
+  const contentBoxes = nodes.flatMap((node) => {
+    const icon = presentationIconBox(node, iconBounds[node.id]);
+    const text = presentationLabel(node.label);
+    const top = node.y! - node.height / 2;
+    return [
+      {
+        left: icon.left - 4,
+        right: icon.right + 4,
+        top: icon.top - 4,
+        bottom: icon.bottom + 4,
+      },
+      {
+        left: node.x! - 68,
+        right: node.x! + 68,
+        top: top + text.firstBaseline - text.fontSize - 4,
+        bottom: top + text.firstBaseline + (text.lines.length - 1) * text.lineHeight + 4,
+      },
+    ];
+  });
   const collides = (a: Box, b: Box) =>
     a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
   for (const edge of edges.filter((edge) => edge.label)) {
     const points = edge.points!;
-    const candidates = points.slice(1).flatMap((b, i) => {
-      const a = points[i];
+    const segments = points.slice(1).map((b, i) => ({ a: points[i], b }));
+    // Prefer the long visible leg, not a short approach beside the icon where
+    // an offset label can look as though it belongs to the neighbouring branch.
+    segments.sort(
+      (a, b) =>
+        Math.hypot(b.b.x - b.a.x, b.b.y - b.a.y) -
+        Math.hypot(a.b.x - a.a.x, a.b.y - a.a.y),
+    );
+    const candidates = segments.flatMap(({ a, b }) => {
       return [0.5, 0.25, 0.75].flatMap((t) =>
         [0, -18, 18].map((offset) => ({
           x: a.x + (b.x - a.x) * t,
@@ -462,7 +537,7 @@ function layoutSlide(
       (p) =>
         p.x > half + 12 &&
         p.x < width - half - 12 &&
-        ![...nodes.map((node) => boxOf(node, 4)), ...placed, ...headers].some((box) =>
+        ![...contentBoxes, ...placed, ...headers].some((box) =>
           collides(labelBox(p), box),
         ),
     );

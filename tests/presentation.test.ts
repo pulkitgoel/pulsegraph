@@ -10,6 +10,7 @@ import { presentationLayout } from '../src/lib/presentationLayout';
 import { presentationLabel } from '../src/lib/presentationLabel';
 import { DIAGRAM_EXAMPLES } from '../src/lib/examples';
 import { DELIVERY_PRESENTATION } from './fixtures/deliveryPresentation';
+import { presentationIconBox } from '../src/lib/presentationIcon';
 import {
   PRODUCTION_FLOW,
   PRODUCTION_PRESENTATION,
@@ -36,6 +37,57 @@ import {
   INCIDENT_PRESENTATION,
   INCIDENT_ROLES,
 } from './fixtures/incidentPresentation';
+
+test('slide attachments use glyph bounds rather than the label bottom', () => {
+  for (const { source, plan } of [
+    { source: INCIDENT_FLOW, plan: INCIDENT_PRESENTATION },
+    { source: DIAGRAM_EXAMPLES[2].source, plan: DELIVERY_PRESENTATION },
+  ]) {
+    const graph = parseDiagram(source);
+    const bounds = Object.fromEntries(
+      graph.nodes.map((node) => [
+        node.id,
+        {
+          x: node.type === 'gateway' ? 51.3 : 55.6,
+          y: 20.3,
+          width: node.type === 'gateway' ? 56.76 : 47.3,
+          height: 56.76,
+        },
+      ]),
+    );
+    const scene = presentationLayout(graph, plan, bounds);
+    for (const edge of scene.graph.edges) {
+      for (const [id, point] of [
+        [edge.from, edge.points![0]],
+        [edge.to, edge.points!.at(-1)!],
+      ] as const) {
+        const node = scene.graph.nodes.find((node) => node.id === id)!;
+        const icon = presentationIconBox(node, bounds[id]);
+        assert.ok(point.y <= icon.bottom, `${edge.id} attaches below the ${id} icon`);
+        const center = {
+          x: (icon.left + icon.right) / 2,
+          y: (icon.top + icon.bottom) / 2,
+        };
+        if (node.type === 'gateway') {
+          const relative =
+            Math.abs(point.x - center.x) / ((icon.right - icon.left) / 2) +
+            Math.abs(point.y - center.y) / ((icon.bottom - icon.top) / 2);
+          assert.ok(
+            Math.abs(relative - 1) < 0.12,
+            `${edge.id} floats away from the decision outline`,
+          );
+        } else {
+          const gap = Math.min(
+            Math.abs(point.x - icon.left),
+            Math.abs(point.x - icon.right),
+            Math.abs(point.y - icon.top),
+          );
+          assert.ok(gap <= 3.01, `${edge.id} floats away from the ${id} glyph`);
+        }
+      }
+    }
+  }
+});
 
 test('curated incident and delivery slides preserve alternate reading paths and retry topology', () => {
   for (const example of [

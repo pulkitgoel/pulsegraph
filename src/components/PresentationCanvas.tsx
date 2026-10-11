@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import gsap from 'gsap';
 import { MotionPathPlugin } from 'gsap/MotionPathPlugin';
 import type { Graph } from '../types';
 import { presentationGroupMembers, type PresentationPlan } from '../lib/presentationPlan';
 import { presentationLayout } from '../lib/presentationLayout';
 import { presentationLabel } from '../lib/presentationLabel';
+import { PRESENTATION_ICON, type PresentationIconBounds } from '../lib/presentationIcon';
 import { pointsToPath } from '../lib/svgPath';
 import {
   pulseRepeatDelay,
@@ -35,16 +36,38 @@ export function PresentationCanvas({
   onCompose: () => void;
   busy: boolean;
 }) {
+  const [measured, setMeasured] = useState<{
+    graph: Graph;
+    bounds: Record<string, PresentationIconBounds>;
+  } | null>(null);
+  const measureIcons = useCallback(
+    (svg: SVGSVGElement | null) => {
+      if (!svg) return;
+      const bounds: Record<string, PresentationIconBounds> = {};
+      svg.querySelectorAll<SVGGElement>('[data-icon-measure]').forEach((icon) => {
+        const box = icon.getBBox();
+        bounds[icon.getAttribute('data-icon-measure')!] = {
+          x: PRESENTATION_ICON.x + box.x * PRESENTATION_ICON.scale,
+          y: PRESENTATION_ICON.y + box.y * PRESENTATION_ICON.scale,
+          width: box.width * PRESENTATION_ICON.scale,
+          height: box.height * PRESENTATION_ICON.scale,
+        };
+      });
+      setMeasured({ graph, bounds });
+    },
+    [graph],
+  );
   const result = useMemo(() => {
+    if (measured?.graph !== graph) return { scene: null, error: '' };
     try {
-      return { scene: presentationLayout(graph, plan), error: '' };
+      return { scene: presentationLayout(graph, plan, measured.bounds), error: '' };
     } catch (error) {
       return {
         scene: null,
         error: error instanceof Error ? error.message : 'Slide layout unavailable.',
       };
     }
-  }, [graph, plan]);
+  }, [graph, plan, measured]);
   const { scene } = result;
   const root = useRef<SVGSVGElement>(null);
   useEffect(() => {
@@ -106,6 +129,19 @@ export function PresentationCanvas({
         : green;
   return (
     <section className="presentation-preview" aria-label="Architecture slide preview">
+      <svg
+        ref={measureIcons}
+        width="0"
+        height="0"
+        aria-hidden="true"
+        style={{ position: 'absolute', visibility: 'hidden' }}
+      >
+        {graph.nodes.map((node) => (
+          <g key={node.id} data-icon-measure={node.id}>
+            <RichNodeIcon type={node.type} label={node.label} />
+          </g>
+        ))}
+      </svg>
       <div className="presentation-preview-toolbar">
         <span>
           <strong>Architecture preview</strong> · 16:9 ·{' '}
@@ -338,7 +374,11 @@ export function PresentationCanvas({
                           fill={blue}
                           opacity="0"
                         />
-                        <g transform="translate(47,16) scale(2.15)">
+                        <g
+                          data-slide-icon={node.id}
+                          data-icon-shape={node.type === 'gateway' ? 'diamond' : 'glyph'}
+                          transform={`translate(${PRESENTATION_ICON.x},${PRESENTATION_ICON.y}) scale(${PRESENTATION_ICON.scale})`}
+                        >
                           <RichNodeIcon type={node.type} label={node.label} />
                         </g>
                         {text.lines.map((line, index) => (

@@ -240,6 +240,9 @@ and Secure CI/CD are checked in both themes, with separate layout tests for
 alternate reading paths.
 Slide routing reserves clearance at every connector exit so one dependency route
 cannot block another, including the Production API's four-way fan-out.
+Presentation arrow endpoints use measured icon bounds, not the invisible area
+reserved for their labels. Branch and return approaches avoid the text beneath
+icons; browser regressions check endpoint gaps and label clearance in both themes.
 
 The delivery regression waits for Presentation mode and the refitted canvas
 before measuring node positions. It still requires the success path to align,

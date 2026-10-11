@@ -12,6 +12,7 @@ import {
 import { DIAGRAM_EXAMPLES } from '../../src/lib/examples';
 import { INCIDENT_PRESENTATION, INCIDENT_ROLES } from '../fixtures/incidentPresentation';
 import { DELIVERY_PRESENTATION, DELIVERY_ROLES } from '../fixtures/deliveryPresentation';
+import { assertPresentationAttachments } from '../helpers/presentationAttachments';
 
 for (const example of [
   {
@@ -29,7 +30,7 @@ for (const example of [
     edges: 10,
   },
 ]) {
-  test(`${example.name} composes through AI with complete branches, labels and animation`, async ({
+  test(`${example.name} composes through AI with attached arrows, complete labels and animation`, async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1600, height: 1000 });
@@ -94,12 +95,14 @@ for (const example of [
     await page.getByRole('button', { name: 'Close source editor', exact: true }).click();
     const chat = page.getByRole('button', { name: 'Chat', exact: true });
     if ((await chat.getAttribute('aria-pressed')) === 'true') await chat.click();
+    await assertPresentationAttachments(page, graph.edges);
     const stem = example.name === 'Incident response' ? 'incident' : 'delivery';
     await page.screenshot({ path: `test-results/${stem}-ai-composition-dark.png` });
     await page.getByRole('button', { name: 'Workspace tools', exact: true }).click();
     await page.getByRole('button', { name: 'Use light theme', exact: true }).click();
     await expect(page.getByRole('alert')).toHaveCount(0);
     await expect(page.locator('[id^="path-"][marker-end]')).toHaveCount(example.edges);
+    await assertPresentationAttachments(page, graph.edges);
     await page.screenshot({ path: `test-results/${stem}-ai-composition-light.png` });
   });
 }
@@ -157,6 +160,7 @@ test('production API example composes through AI and renders all four dependency
   await page.getByRole('button', { name: 'Close source editor', exact: true }).click();
   const chat = page.getByRole('button', { name: 'Chat', exact: true });
   if ((await chat.getAttribute('aria-pressed')) === 'true') await chat.click();
+  await assertPresentationAttachments(page, parseDiagram(PRODUCTION_FLOW).edges);
   await page.screenshot({ path: 'test-results/production-api-ai-routing.png' });
 });
 
