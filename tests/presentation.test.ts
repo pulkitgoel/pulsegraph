@@ -8,6 +8,12 @@ import {
 } from '../src/lib/presentationPlan';
 import { presentationLayout } from '../src/lib/presentationLayout';
 import { presentationLabel } from '../src/lib/presentationLabel';
+import { DIAGRAM_EXAMPLES } from '../src/lib/examples';
+import { DELIVERY_PRESENTATION } from './fixtures/deliveryPresentation';
+import {
+  PRODUCTION_FLOW,
+  PRODUCTION_PRESENTATION,
+} from './fixtures/productionPresentation';
 import {
   NOVATION_FLOW,
   NOVATION_PRESENTATION,
@@ -30,6 +36,122 @@ import {
   INCIDENT_PRESENTATION,
   INCIDENT_ROLES,
 } from './fixtures/incidentPresentation';
+
+test('curated incident and delivery slides preserve alternate reading paths and retry topology', () => {
+  for (const example of [
+    {
+      name: 'Incident response',
+      plan: INCIDENT_PRESENTATION,
+      alternatives: [['A', 'B', 'C', 'E', 'H']],
+    },
+    {
+      name: 'Secure CI/CD pipeline',
+      plan: DELIVERY_PRESENTATION,
+      alternatives: [
+        ['A', 'B', 'C', 'D', 'E'],
+        ['A', 'B', 'C', 'D', 'F', 'G', 'H', 'I'],
+      ],
+    },
+  ]) {
+    const graph = parseDiagram(
+      DIAGRAM_EXAMPLES.find((item) => item.name === example.name)!.source,
+    );
+    const before = JSON.stringify(graph);
+    for (const mainPath of [example.plan.mainPath, ...example.alternatives]) {
+      const plan = validatePresentationPlan({ ...example.plan, mainPath }, graph);
+      const scene = presentationLayout(graph, plan);
+      if (mainPath === example.plan.mainPath) assert.equal(scene.lanes.length, 1);
+      assert.deepEqual(
+        scene.graph.nodes.map((node) => [node.id, node.label]).sort(),
+        graph.nodes.map((node) => [node.id, node.label]).sort(),
+      );
+      assert.deepEqual(
+        scene.graph.edges.map((edge) => ({ ...edge, points: [] })),
+        graph.edges,
+      );
+      assert.equal(Object.keys(scene.labels).length, 4);
+      for (const edge of scene.graph.edges) {
+        assert.ok(
+          !routeCrossesNode(edge, scene.graph.nodes),
+          `${example.name}: ${edge.id} crosses a node`,
+        );
+        assert.ok(
+          edge.points!.every(
+            (point) =>
+              point.x >= 0 &&
+              point.x <= scene.width &&
+              point.y >= 0 &&
+              point.y <= scene.height,
+          ),
+        );
+      }
+    }
+    assert.equal(JSON.stringify(graph), before);
+  }
+});
+
+test('production API fan-out keeps every port reachable and separates connector rails', () => {
+  const graph = parseDiagram(PRODUCTION_FLOW);
+  const before = JSON.stringify(graph);
+  for (const mainPath of [
+    PRODUCTION_PRESENTATION.mainPath,
+    [...PRODUCTION_PRESENTATION.mainPath, 'DB'],
+  ]) {
+    for (const lanes of [
+      PRODUCTION_PRESENTATION.lanes,
+      [
+        {
+          title: 'System',
+          kind: 'journey' as const,
+          nodeIds: graph.nodes.map((n) => n.id),
+        },
+      ],
+    ]) {
+      const plan = validatePresentationPlan(
+        { ...PRODUCTION_PRESENTATION, mainPath, lanes },
+        graph,
+      );
+      const scene = presentationLayout(graph, plan);
+      assert.equal(scene.graph.nodes.length, 9);
+      assert.deepEqual(
+        scene.graph.edges.map((edge) => ({ ...edge, points: [] })),
+        graph.edges,
+      );
+      assert.ok(scene.labels.e_8);
+      for (const edge of scene.graph.edges)
+        assert.ok(
+          !routeCrossesNode(edge, scene.graph.nodes),
+          `${edge.id} crosses a node`,
+        );
+      const segments = scene.graph.edges.flatMap((edge) =>
+        edge.points!.slice(1).map((b, i) => ({ id: edge.id, a: edge.points![i], b })),
+      );
+      for (const a of segments)
+        for (const b of segments) {
+          if (a.id === b.id) continue;
+          for (const axis of ['x', 'y'] as const) {
+            const other = axis === 'x' ? 'y' : 'x';
+            if (a.a[axis] !== a.b[axis] || b.a[axis] !== b.b[axis]) continue;
+            const overlap =
+              Math.min(
+                Math.max(a.a[other], a.b[other]),
+                Math.max(b.a[other], b.b[other]),
+              ) -
+              Math.max(
+                Math.min(a.a[other], a.b[other]),
+                Math.min(b.a[other], b.b[other]),
+              );
+            if (overlap > 0.1)
+              assert.ok(
+                Math.abs(a.a[axis] - b.a[axis]) >= 23.9,
+                `${a.id}/${b.id} run too close`,
+              );
+          }
+        }
+    }
+  }
+  assert.equal(JSON.stringify(graph), before);
+});
 
 test('real AI duplicate path and group sections normalize without changing topology', () => {
   const graph = parseDiagram(LIVE_RESEARCH_FLOW);

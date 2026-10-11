@@ -233,6 +233,14 @@ preservation, document round trips, framing limits, cycles, self-loops and a
 100-graph routing corpus. Browser tests cover editing, recovery, real exports,
 cancellation, mobile layout and reduced motion.
 
+All three curated examples have AI-composition browser regressions using
+representative provider responses. They check source preservation, directed arrows,
+branch labels, live marker movement and readable slide rendering. Incident response
+and Secure CI/CD are checked in both themes, with separate layout tests for
+alternate reading paths.
+Slide routing reserves clearance at every connector exit so one dependency route
+cannot block another, including the Production API's four-way fan-out.
+
 The delivery regression waits for Presentation mode and the refitted canvas
 before measuring node positions. It still requires the success path to align,
 the repair branch to sit below it, and retry connectors to clear every node.

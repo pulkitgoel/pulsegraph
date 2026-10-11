@@ -74,6 +74,7 @@ function route(
   width: number,
   height: number,
   headers: Box[],
+  portExits: Point[],
 ): Point[] | null {
   const xs = new Set([start.x, end.x, 24, 40, width - 40, width - 24]);
   const ys = new Set([start.y, end.y, 114, 126, height - 62, height - 48]);
@@ -103,7 +104,15 @@ function route(
   }
   const x = [...xs].filter((v) => v >= 16 && v <= width - 16).sort((a, b) => a - b);
   const y = [...ys].filter((v) => v >= 108 && v <= height - 40).sort((a, b) => a - b);
-  const boxes = [...nodes.map((node) => boxOf(node, 8)), ...headers];
+  // A perpendicular crossing is fine along a route, but not at another
+  // connector's exit: it can trap that connector before it reaches the grid.
+  const exitBoxes = portExits.map((point) => ({
+    left: point.x - PRESENTATION_EDGE_GAP + 0.1,
+    right: point.x + PRESENTATION_EDGE_GAP - 0.1,
+    top: point.y - PRESENTATION_EDGE_GAP + 0.1,
+    bottom: point.y + PRESENTATION_EDGE_GAP - 0.1,
+  }));
+  const boxes = [...nodes.map((node) => boxOf(node, 8)), ...headers, ...exitBoxes];
   const valid = y.flatMap((py) =>
     x.map((px) => !boxes.some((box) => inside({ x: px, y: py }, box))),
   );
@@ -403,6 +412,9 @@ function layoutSlide(
       width,
       height,
       headers,
+      [...attachments]
+        .filter(([id]) => id !== edge.id)
+        .flatMap(([, { a, b }]) => [a.stub, b.stub]),
     );
     if (!path)
       throw new PresentationRoutingError(
