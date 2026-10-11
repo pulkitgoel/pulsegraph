@@ -198,11 +198,12 @@ header. See [SECURITY.md](SECURITY.md).
     npx playwright install chromium
     npm run test:e2e
     npm run test:pages
-    npm audit
+    npm audit --audit-level=high
     npm run preview
 
 To test the production build and its security policy in PowerShell:
 
+    npm run build
     $env:PLAYWRIGHT_PRODUCTION="1"
     npm run test:e2e
 
@@ -217,6 +218,10 @@ unit tests, dependency audit, and Chromium end-to-end tests. Automated provider
 tests are mocked and never require a real key; live providers need a separate
 smoke test.
 
+Install from the committed `package-lock.json` with `npm ci` so local and CI
+checks use the same patched dependency versions. Keep temporary capture output
+outside the project: formatting checks include unignored local files.
+
 `npm run test:pages` builds with the `/pulsegraph/` deployment prefix and checks
 that the landing GIF and reduced-motion PNG load successfully, catching asset
 paths that work locally but break on GitHub Pages.
@@ -225,6 +230,10 @@ Regressions cover parsing (including stadium labels), malformed AI output, graph
 preservation, document round trips, framing limits, cycles, self-loops and a
 100-graph routing corpus. Browser tests cover editing, recovery, real exports,
 cancellation, mobile layout and reduced motion.
+
+The delivery regression waits for Presentation mode and the refitted canvas
+before measuring node positions. It still requires the success path to align,
+the repair branch to sit below it, and retry connectors to clear every node.
 
 The [research-flow fixture](tests/fixtures/researchFlow.ts) exercises a multi-agent
 pipeline with cache shortcuts, retries, gateway fan-in and polling. Its
