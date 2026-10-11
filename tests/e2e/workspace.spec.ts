@@ -162,7 +162,11 @@ test('browser showcase adds responsive depth and respects reduced motion', async
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await expect(shot).toHaveCSS('transform', 'none');
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator('.browser-float-render')).toBeHidden();
+  await expect
+    .poll(() =>
+      shot.locator('img').evaluate((image) => (image as HTMLImageElement).currentSrc),
+    )
+    .toContain('pulsegraph-live-flow-static.png');
   expect(
     await page.locator('.landing-page').evaluate((element) => element.scrollWidth),
   ).toBeLessThanOrEqual(390);
@@ -184,20 +188,14 @@ test('landing preview, examples, footer and workspace menu work at narrow widths
     'aria-pressed',
     'true',
   );
-  expect(
-    await page
-      .locator('.preview-beams path')
-      .first()
-      .evaluate((path) => getComputedStyle(path).animationPlayState),
-  ).toBe('paused');
+  const preview = page.locator('.browser-screen img');
+  await expect(preview).toHaveAttribute('src', /pulsegraph-live-flow-static\.png$/);
   await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect(preview).toHaveAttribute('src', /pulsegraph-live-flow\.gif\?v=8$/);
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  expect(
-    await page
-      .locator('.preview-beams path')
-      .first()
-      .evaluate((path) => getComputedStyle(path).animationName),
-  ).toBe('none');
+  await expect
+    .poll(() => preview.evaluate((image) => (image as HTMLImageElement).currentSrc))
+    .toContain('pulsegraph-live-flow-static.png');
   for (const width of [320, 390, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     const landing = page.locator('.landing-page');
@@ -632,9 +630,9 @@ test('local rendering, editing, undo, recovery, keyboard navigation and no exter
   expect(external).toEqual([]);
   await openMore(page);
   await page.getByRole('button', { name: 'Reset workspace', exact: true }).click();
-  await expect(page.getByRole('heading', { name: /Mermaid in/ })).toBeVisible();
+  await expect(page.locator('#landing-title')).toBeVisible();
   await page.reload();
-  await expect(page.getByRole('heading', { name: /Mermaid in/ })).toBeVisible();
+  await expect(page.locator('#landing-title')).toBeVisible();
 });
 
 test('invalid source preserves the current document', async ({ page }) => {

@@ -3,10 +3,61 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { RESEARCH_FLOW } from '../fixtures/researchFlow';
 import { RESEARCH_PRESENTATION, RESEARCH_ROLES } from '../fixtures/researchPresentation';
 import {
+  INCIDENT_FLOW,
+  INCIDENT_PRESENTATION,
+  INCIDENT_ROLES,
+} from '../fixtures/incidentPresentation';
+import {
   NOVATION_FLOW,
   NOVATION_PRESENTATION,
   NOVATION_ROLES,
 } from '../fixtures/novationPresentation';
+
+test('incident response keeps the complete journey in one section with a separate branch', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto('/');
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'incident.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(
+      JSON.stringify({
+        version: 1,
+        source: INCIDENT_FLOW,
+        roles: INCIDENT_ROLES,
+        presentation: INCIDENT_PRESENTATION,
+      }),
+    ),
+  });
+  await page.getByRole('button', { name: 'Presentation', exact: true }).click();
+  const chat = page.getByRole('button', { name: 'Chat', exact: true });
+  if ((await chat.getAttribute('aria-pressed')) === 'true') await chat.click();
+  await expect(page.locator('.presentation-preview [role="alert"]')).toHaveCount(0);
+  await expect(page.locator('[data-slide-lane]')).toHaveCount(1);
+  await expect(page.locator('#pulsegraph-svg [id^="node-group-"]')).toHaveCount(8);
+  await expect(page.locator('#pulsegraph-svg [id^="path-"]')).toHaveCount(9);
+  await expect(page.locator('[data-edge-label]')).toHaveCount(4);
+  const bounds = await page.locator('#pulsegraph-svg').evaluate((svg) => {
+    const top = (id: string) =>
+      svg.querySelector(`#node-group-${id}`)!.getBoundingClientRect().top;
+    return {
+      main: ['A', 'B', 'C', 'D', 'F', 'G', 'H'].map(top),
+      branch: top('E'),
+      arrows: svg.querySelectorAll('[id^="path-"][marker-end]').length,
+    };
+  });
+  expect(Math.max(...bounds.main) - Math.min(...bounds.main)).toBeLessThan(1);
+  expect(bounds.branch).toBeGreaterThan(bounds.main[0] + 100);
+  expect(bounds.arrows).toBe(9);
+  const pulse = page.locator('#pulse-e_1');
+  const before = await pulse.getAttribute('transform');
+  await expect.poll(() => pulse.getAttribute('transform')).not.toEqual(before);
+  await page.screenshot({ path: 'test-results/incident-presentation-dark.png' });
+  await page.getByRole('button', { name: 'Workspace tools', exact: true }).click();
+  await page.getByRole('button', { name: 'Use light theme', exact: true }).click();
+  await page.screenshot({ path: 'test-results/incident-presentation-light.png' });
+});
 
 test('Novation long labels render completely inside the live slide and SVG export', async ({
   page,
@@ -116,10 +167,11 @@ test('architecture preview preserves the research flow on one landscape slide', 
   await expect(page.locator('#pulsegraph-svg [data-source-group="grp_ag"]')).toHaveCount(
     1,
   );
-  await expect(page.locator('#pulsegraph-svg')).toHaveAttribute(
-    'viewBox',
-    '0 0 1600 900',
-  );
+  const slideRatio = await page.locator('#pulsegraph-svg').evaluate((svg) => {
+    const box = (svg as SVGSVGElement).viewBox.baseVal;
+    return box.width / box.height;
+  });
+  expect(slideRatio).toBeCloseTo(16 / 9);
   await page.waitForTimeout(900);
   await page.screenshot({ path: 'test-results/architecture-research-dark.png' });
   const state = await page.locator('#pulsegraph-svg').evaluate((svg) => {

@@ -664,7 +664,10 @@ export default function App() {
             onResetKey={() => setSettingsOpen(true)}
           />
         )}
-        <main className={'canvas-section ' + (diagram ? 'canvas-section--visible' : '')}>
+        <main
+          className={'canvas-section ' + (diagram ? 'canvas-section--visible' : '')}
+          aria-hidden={!active}
+        >
           {diagram &&
             displayedGraph &&
             (isPresentation && architecturePreview && standardGraph && slidePlan ? (

@@ -196,6 +196,16 @@ test('late shape definition upgrades an earlier plain reference', () => {
   assert.equal(b.type, 'gateway');
 });
 
+test('last explicit node definition wins without plain references erasing it', () => {
+  const graph = parseMermaid(
+    'flowchart LR\nA[Old label] --> B\nA{Latest label}\nA --> C\nA --> B',
+  );
+  assert.equal(graph.nodes.find((node) => node.id === 'A')!.label, 'Latest label');
+  assert.equal(graph.nodes.find((node) => node.id === 'A')!.type, 'gateway');
+  assert.deepEqual(edgePairs(graph), ['A->B', 'A->C']);
+  assert.deepEqual(graph.warnings, []);
+});
+
 // ── Subgraphs / directions / warnings ─────────────────────────────────────────
 
 test('subgraph members are collected, direction lines skipped', () => {

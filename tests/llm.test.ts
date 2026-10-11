@@ -4,6 +4,10 @@ import { sendMessage, designPresentation } from '../src/services/llmService.ts';
 import { parseDiagram, readCompletion } from '../src/services/llmValidation.ts';
 import { requestCompletion } from '../src/services/llmClient.ts';
 import { RESEARCH_FLOW } from './fixtures/researchFlow';
+import {
+  LIVE_RESEARCH_FLOW,
+  LIVE_RESEARCH_DUPLICATE_PLAN,
+} from './fixtures/liveAiResearch';
 import { RESEARCH_ROLES, RESEARCH_PRESENTATION } from './fixtures/researchPresentation';
 
 const SOURCE = 'flowchart LR\nA[Client] --> B[API]';
@@ -14,6 +18,26 @@ function completion(content: unknown, finishReason = 'stop'): Response {
     ],
   });
 }
+
+test('composition service accepts the safely normalized live AI regression', async () => {
+  const graph = parseDiagram(LIVE_RESEARCH_FLOW);
+  const roles = Object.fromEntries(graph.nodes.map((node) => [node.id, 'pipeline']));
+  const fetchMock = mock.method(globalThis, 'fetch', async () =>
+    completion({
+      roles,
+      presentation: LIVE_RESEARCH_DUPLICATE_PLAN,
+    }),
+  );
+  try {
+    const result = await designPresentation(LIVE_RESEARCH_FLOW, 'test-key', 'deepseek');
+    assert.equal(result.mermaidSource, LIVE_RESEARCH_FLOW);
+    assert.deepEqual(result.graph, graph);
+    assert.equal(result.presentation?.mainPath.at(-1), 'GetResult');
+    assert.equal(result.presentation?.lanes.flatMap((lane) => lane.nodeIds).length, 16);
+  } finally {
+    fetchMock.mock.restore();
+  }
+});
 
 test('AI composition receives edge labels and groups but cannot rewrite source', async () => {
   let body: { messages: { role: string; content: string }[] } | undefined;
@@ -41,6 +65,14 @@ test('AI composition receives edge labels and groups but cannot rewrite source',
       'no, retry max 2',
     );
     assert.deepEqual(content.groups[0].members, ['A1', 'A2', 'A3', 'A4']);
+    assert.equal(
+      content.nodes.find((node: { id: string }) => node.id === 'C').type,
+      'gateway',
+    );
+    assert.equal(
+      content.edges.find((edge: { id: string }) => edge.id === 'e_14').arrow,
+      'arrow',
+    );
   } finally {
     fetchMock.mock.restore();
   }
@@ -134,6 +166,44 @@ test('refinement is explicit and unchanged model output is rejected', async () =
     assert.equal(latest.operation, 'refine');
     assert.equal(latest.instruction, 'Add a Redis cache before the API');
     assert.equal(latest.currentDiagram, SOURCE);
+  } finally {
+    fetchMock.mock.restore();
+  }
+});
+
+test('refinement accepts case-sensitive IDs and label edits but rejects formatting-only output', async () => {
+  const current = parseDiagram('flowchart LR\nA[api] --> B[Result]');
+  for (const source of [
+    'flowchart LR\nA[API] --> B[Result]',
+    'flowchart LR\nA[api] --> b[Result]',
+    'flowchart LR\nA[api  server] --> B[Result]',
+  ]) {
+    const fetchMock = mock.method(globalThis, 'fetch', async () =>
+      completion({ mermaidCode: source }),
+    );
+    try {
+      const result = await sendMessage(
+        'Rename the component',
+        [],
+        current,
+        'test-key',
+        'deepseek',
+      );
+      assert.equal(result.mermaidSource, source);
+    } finally {
+      fetchMock.mock.restore();
+    }
+  }
+  const fetchMock = mock.method(globalThis, 'fetch', async () =>
+    completion({
+      mermaidCode: 'flowchart LR; %% formatting only\n  A["api"]   --> B[Result]',
+    }),
+  );
+  try {
+    await assert.rejects(
+      sendMessage('Rename the component', [], current, 'test-key', 'deepseek'),
+      /without applying your instruction/,
+    );
   } finally {
     fetchMock.mock.restore();
   }

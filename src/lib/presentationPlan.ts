@@ -96,6 +96,85 @@ export function validatePresentationPlan(value: unknown, graph: Graph): Presenta
   return { title: title(plan.title), mainPath: [...mainPath], lanes };
 }
 
+/**
+ * Live models sometimes describe a closing return as part of the reading path,
+ * or list an explicit group both in the journey and in its own section. Repair
+ * only those unambiguous metadata duplicates, then apply the strict validator.
+ * Stored/imported plans continue to use validatePresentationPlan directly.
+ */
+export function validateAiPresentationPlan(
+  value: unknown,
+  graph: Graph,
+): PresentationPlan {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return validatePresentationPlan(value, graph);
+  const raw = value as Record<string, unknown>;
+  const plan = { ...raw };
+  const ids = new Set(graph.nodes.map((node) => node.id));
+  if (
+    Array.isArray(raw.mainPath) &&
+    raw.mainPath.length > 1 &&
+    raw.mainPath.every((id) => typeof id === 'string' && ids.has(id))
+  ) {
+    const path = raw.mainPath as string[];
+    const prefix = path.slice(0, -1);
+    if (
+      prefix.includes(path.at(-1)!) &&
+      new Set(prefix).size === prefix.length &&
+      path.every(
+        (id, index) =>
+          index === 0 ||
+          graph.edges.some((edge) => edge.from === path[index - 1] && edge.to === id),
+      )
+    )
+      plan.mainPath = prefix;
+  }
+  if (
+    Array.isArray(raw.lanes) &&
+    raw.lanes.length > 0 &&
+    raw.lanes.length <= graph.nodes.length &&
+    raw.lanes.every(
+      (lane) =>
+        lane &&
+        typeof lane === 'object' &&
+        !Array.isArray(lane) &&
+        typeof lane.title === 'string' &&
+        lane.title.trim() &&
+        lane.title.length <= 100 &&
+        !/[<>]/.test(lane.title) &&
+        (lane.kind === 'journey' ||
+          lane.kind === 'support' ||
+          lane.kind === 'platform') &&
+        Array.isArray(lane.nodeIds) &&
+        lane.nodeIds.length > 0 &&
+        lane.nodeIds.every((id: unknown) => typeof id === 'string' && ids.has(id)) &&
+        new Set(lane.nodeIds).size === lane.nodeIds.length,
+    )
+  ) {
+    const lanes = (raw.lanes as PresentationLane[]).map((lane) => ({
+      ...lane,
+      nodeIds: [...lane.nodeIds],
+    }));
+    for (const group of graph.groups?.filter((group) => !group.parentId) ?? []) {
+      const members = presentationGroupMembers(graph, group.id);
+      if (!members.length) continue;
+      // Only a unique, dedicated source-group lane can own duplicated members.
+      // Do not guess ownership between broad or incomplete semantic sections.
+      const dedicated = lanes.filter(
+        (lane) =>
+          lane.nodeIds.length === members.length &&
+          members.every((id) => lane.nodeIds.includes(id)),
+      );
+      if (dedicated.length !== 1) continue;
+      for (const lane of lanes)
+        if (lane !== dedicated[0])
+          lane.nodeIds = lane.nodeIds.filter((id) => !members.includes(id));
+    }
+    plan.lanes = lanes.filter((lane) => lane.nodeIds.length > 0);
+  }
+  return validatePresentationPlan(plan, graph);
+}
+
 /** Compatibility preview for old role-only documents; clearly labelled as local. */
 export function localPresentationPlan(
   graph: Graph,
@@ -120,6 +199,28 @@ export function localPresentationPlan(
   };
   const mainPath =
     order.map((node) => longest(node.id)).sort((a, b) => b.length - a.length)[0] ?? [];
+  // Role-only documents need the same compact process composition as AI plans.
+  // A terminal result or alternative branch is not a supporting system.
+  if (
+    graph.nodes.length <= 10 &&
+    !graph.groups?.length &&
+    graph.nodes.every((node) => roles[node.id] !== 'service')
+  ) {
+    return validatePresentationPlan(
+      {
+        title: 'System flow',
+        mainPath,
+        lanes: [
+          {
+            title: 'Main journey',
+            kind: 'journey',
+            nodeIds: order.map((node) => node.id),
+          },
+        ],
+      },
+      graph,
+    );
+  }
   const topGroups = (graph.groups ?? [])
     .filter((group) => !group.parentId)
     .map((group) => ({ ...group, members: presentationGroupMembers(graph, group.id) }))

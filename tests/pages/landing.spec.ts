@@ -27,10 +27,9 @@ test('landing demo loads from the GitHub Pages subpath in both motion preference
   );
   await page.emulateMedia({ reducedMotion: 'reduce' });
   expect((await staticResponse).status()).toBe(200);
-  await expect(preview).toHaveCSS(
-    'content',
-    'url("http://127.0.0.1:5179/pulsegraph/pulsegraph-live-flow-static.png")',
-  );
+  await expect
+    .poll(() => preview.evaluate((image) => (image as HTMLImageElement).currentSrc))
+    .toBe('http://127.0.0.1:5179/pulsegraph/pulsegraph-live-flow-static.png');
   expect(failedAssets).toEqual([]);
   await page
     .locator('.browser-shot')
