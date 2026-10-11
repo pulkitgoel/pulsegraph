@@ -291,15 +291,30 @@
   background: #2a384b;
 }
 .browser-screen {
+  position: relative;
   background: #0b0f17;
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 .browser-screen img {
   display: block;
   width: 100%;
   height: auto;
-  /* Trim only the export's empty vertical margins; keep every node and arrow visible. */
-  aspect-ratio: 3 / 1;
-  object-fit: cover;
+  /* Content-fit export: show the complete retry lane without clipping any arrows. */
+  aspect-ratio: 2560 / 632;
+  object-fit: contain;
+}
+.demo-loading {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  padding: 7px 10px;
+  border: 1px solid #3a475c;
+  border-radius: 6px;
+  background: #121923;
+  color: #e9f1fc;
+  font-size: 12px;
 }
 .demo-caption {
   display: flex;

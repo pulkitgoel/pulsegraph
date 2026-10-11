@@ -13,7 +13,7 @@ test('landing demo loads from the GitHub Pages subpath in both motion preference
   await preview.scrollIntoViewIfNeeded();
   await expect(preview).toHaveAttribute(
     'src',
-    '/pulsegraph/pulsegraph-live-flow.gif?v=8',
+    '/pulsegraph/pulsegraph-live-flow.gif?v=9',
   );
   await expect
     .poll(() => preview.evaluate((image) => (image as HTMLImageElement).naturalWidth))
@@ -21,15 +21,22 @@ test('landing demo loads from the GitHub Pages subpath in both motion preference
   const gif = await page.request.get((await preview.getAttribute('src')) as string);
   expect(gif.status()).toBe(200);
   expect(gif.headers()['content-type']).toContain('image/gif');
+  expect((await gif.body()).byteLength).toBeLessThan(2_000_000);
+  await expect(page.locator('.browser-screen')).toHaveAttribute('aria-busy', 'false');
+  const firstFrame = await preview.screenshot();
+  await expect
+    .poll(async () => (await preview.screenshot()).equals(firstFrame))
+    .toBe(false);
 
-  const staticResponse = page.waitForResponse((response) =>
-    response.url().endsWith('/pulsegraph/pulsegraph-live-flow-static.png'),
+  const staticResponse = await page.request.get(
+    '/pulsegraph/pulsegraph-live-flow-static.png?v=9',
   );
+  expect(staticResponse.status()).toBe(200);
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  expect((await staticResponse).status()).toBe(200);
   await expect
     .poll(() => preview.evaluate((image) => (image as HTMLImageElement).currentSrc))
-    .toBe('http://127.0.0.1:5179/pulsegraph/pulsegraph-live-flow-static.png');
+    .toBe('http://127.0.0.1:5179/pulsegraph/pulsegraph-live-flow-static.png?v=9');
+  await expect(page.locator('.demo-caption')).toContainText('Static preview');
   expect(failedAssets).toEqual([]);
   await page
     .locator('.browser-shot')

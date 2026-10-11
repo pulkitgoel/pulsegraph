@@ -9,6 +9,7 @@ import {
   ShieldCheck,
 } from '@phosphor-icons/react';
 import './LandingPage.css';
+import { LANDING_DEMO } from '../lib/examples';
 
 interface Example {
   name: string;
@@ -67,6 +68,8 @@ function BrowserShowcase({ onOpen, busy }: { onOpen: () => void; busy: boolean }
   const windowRef = useRef<HTMLElement>(null);
   const [paused, setPaused] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [staticPreview, setStaticPreview] = useState(false);
   const base = import.meta.env.BASE_URL;
   function updateTilt(event: ReactPointerEvent<HTMLDivElement>) {
     if (
@@ -98,12 +101,18 @@ function BrowserShowcase({ onOpen, busy }: { onOpen: () => void; busy: boolean }
             <i />
           </span>
           <span className="window-address">
-            Production API architecture <span>· Rich mode</span>
+            {LANDING_DEMO.name} <span>· Rich mode</span>
           </span>
           <button
             className="preview-toggle"
             type="button"
-            onClick={() => setPaused(!paused)}
+            onClick={() => {
+              // The picture keeps the same static source under reduced motion;
+              // no new load event fires when the fallback src toggles.
+              if (!matchMedia('(prefers-reduced-motion: reduce)').matches)
+                setReady(false);
+              setPaused(!paused);
+            }}
             aria-pressed={paused}
             disabled={failed}
             title={
@@ -113,29 +122,51 @@ function BrowserShowcase({ onOpen, busy }: { onOpen: () => void; busy: boolean }
             {failed ? 'Preview' : paused ? 'Play' : 'Pause'}
           </button>
         </div>
-        <div className="browser-screen">
+        <div
+          className="browser-screen"
+          aria-busy={!ready}
+          style={{ backgroundImage: `url(${base}pulsegraph-live-flow-static.png?v=9)` }}
+        >
           <picture>
             <source
               media="(prefers-reduced-motion: reduce)"
-              srcSet={`${base}pulsegraph-live-flow-static.png`}
+              srcSet={`${base}pulsegraph-live-flow-static.png?v=9`}
             />
             <img
-              src={`${base}${paused || failed ? 'pulsegraph-live-flow-static.png' : 'pulsegraph-live-flow.gif?v=8'}`}
-              alt="PulseGraph production API diagram showing customer traffic through edge security, services, Redis, PostgreSQL and monitoring"
+              src={`${base}${paused || failed ? 'pulsegraph-live-flow-static.png?v=9' : 'pulsegraph-live-flow.gif?v=9'}`}
+              alt="Checkout flow from customer to payment approval and order confirmation, with a separate payment retry branch"
               width={2560}
-              height={1440}
+              height={632}
+              style={{ visibility: ready ? 'visible' : 'hidden' }}
               decoding="async"
               fetchPriority="high"
-              onError={() => setFailed(true)}
+              onLoad={(event) => {
+                setStaticPreview(event.currentTarget.currentSrc.includes('-static.png'));
+                setReady(true);
+              }}
+              onError={() => {
+                setReady(false);
+                setFailed(true);
+              }}
             />
           </picture>
+          {!ready && (
+            <span className="demo-loading" role="status">
+              {paused || failed ? 'Loading preview…' : 'Loading animation…'}
+            </span>
+          )}
         </div>
         <figcaption className="demo-caption">
           <span>
             <span className="demo-dot" aria-hidden />
             Actual PulseGraph export{' '}
             <span className="demo-caption-detail">
-              · {paused || failed ? 'Static preview' : 'Animated GIF'}
+              ·{' '}
+              {!ready
+                ? 'Loading preview'
+                : paused || failed || staticPreview
+                  ? 'Static preview'
+                  : 'Animated GIF'}
             </span>
           </span>
           <button type="button" onClick={onOpen} disabled={busy}>
@@ -157,7 +188,7 @@ export function LandingPage({
   onSettings,
 }: LandingPageProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const demo = examples[0];
+  const demo = LANDING_DEMO;
   return (
     <main className="landing-page">
       <section className="landing-hero" aria-labelledby="landing-title">

@@ -8,11 +8,20 @@ import assert from 'node:assert/strict';
 import { parseMermaid } from '../src/parser/mermaidParser.ts';
 import { computeLevels, maxLevel } from '../src/lib/graphLevels.ts';
 import { sanitizeAnimationCss, sanitizeClassName } from '../src/lib/sanitizeCss.ts';
-import { DIAGRAM_EXAMPLES } from '../src/lib/examples.ts';
+import { DIAGRAM_EXAMPLES, LANDING_DEMO } from '../src/lib/examples.ts';
 
 const ids = (g: ReturnType<typeof parseMermaid>) => g.nodes.map((n) => n.id).sort();
 const edgePairs = (g: ReturnType<typeof parseMermaid>) =>
   g.edges.map((e) => `${e.from}->${e.to}`).sort();
+
+test('landing checkout demo preserves approval, confirmation and payment retry', () => {
+  const graph = parseMermaid(LANDING_DEMO.source);
+  assert.equal(graph.warnings?.length, 0);
+  assert.equal(graph.nodes.length, 6);
+  assert.deepEqual(edgePairs(graph), ['C->P', 'O->E', 'P->O', 'P->R', 'U->C']);
+  assert.equal(graph.edges.find((edge) => edge.to === 'O')!.label, 'Yes');
+  assert.equal(graph.edges.find((edge) => edge.to === 'R')!.label, 'No');
+});
 
 // ── Chained edges ─────────────────────────────────────────────────────────────
 

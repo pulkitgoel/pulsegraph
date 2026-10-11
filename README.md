@@ -13,6 +13,8 @@ Connect DeepSeek or local Ollama when you want to describe changes in plain Engl
 ## Features
 
 - Responsive landing page with a real Rich-mode GIF exported by PulseGraph, a one-click Mermaid starter, editable examples, light/dark themes, and privacy/export FAQs. The demo opens its source in the editor and provides pause, reduced-motion, and failed-image static previews.
+  The checkout demo shows approval, order confirmation and payment retry, with a
+  static poster and an explicit loading status while the GIF downloads.
 - Classic and Rich SVG styles with moving dots; Flow style with moving segments and rounded connectors. All three preserve directed arrowheads.
 - Direct Mermaid editing, mouse/touch pan, keyboard zoom, and Play/Pause.
 - Local draft recovery, 20-step undo/redo, source import, editable JSON import/export.
@@ -243,8 +245,12 @@ right-side routes, and marker-arrival glow timing in Classic and Rich.
 
 ### Refresh the landing preview
 
-The landing GIF is generated through the application's actual **Production API
-architecture → Rich → Export** workflow, not a separate hand-drawn animation.
+The landing GIF is generated through the application's actual **Checkout to
+confirmation → Rich → Export** workflow, not a separate hand-drawn animation.
+The shared `LANDING_DEMO` source in `src/lib/examples.ts` powers both the capture
+and **Open this diagram**. Content-fit framing keeps every arrow and retry branch
+visible without the old 16:9 export's empty margins. Marker speed and export
+timing use the existing renderer and encoder, without landing-only motion rules.
 
 Start a local production preview:
 

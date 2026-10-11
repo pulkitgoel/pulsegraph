@@ -189,9 +189,9 @@ test('landing preview, examples, footer and workspace menu work at narrow widths
     'true',
   );
   const preview = page.locator('.browser-screen img');
-  await expect(preview).toHaveAttribute('src', /pulsegraph-live-flow-static\.png$/);
+  await expect(preview).toHaveAttribute('src', /pulsegraph-live-flow-static\.png\?v=9$/);
   await page.getByRole('button', { name: 'Play', exact: true }).click();
-  await expect(preview).toHaveAttribute('src', /pulsegraph-live-flow\.gif\?v=8$/);
+  await expect(preview).toHaveAttribute('src', /pulsegraph-live-flow\.gif\?v=9$/);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await expect
     .poll(() => preview.evaluate((image) => (image as HTMLImageElement).currentSrc))

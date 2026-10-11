@@ -4,6 +4,14 @@ export interface DiagramExample {
   source: string;
 }
 
+/** Shared by the landing preview, its editor action and the actual export capture. */
+export const LANDING_DEMO: DiagramExample = {
+  name: 'Checkout to confirmation',
+  description: 'Follow a checkout through payment approval, confirmation and retry.',
+  source:
+    'flowchart LR\nU((Customer)) --> C[Checkout]\nC --> P{Payment approved?}\nP -->|Yes| O[Order service]\nO --> E[Confirmation email]\nP -->|No| R[Retry payment]',
+};
+
 /** Curated examples shown on the landing page and covered by parser regressions. */
 export const DIAGRAM_EXAMPLES: DiagramExample[] = [
   {
