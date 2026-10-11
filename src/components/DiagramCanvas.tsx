@@ -12,7 +12,7 @@ import { MotionPathPlugin } from 'gsap/MotionPathPlugin';
 import type { Graph, NodeType } from '../types';
 import { getGraphDimensions } from '../parser/layoutEngine';
 import { computeLevels } from '../lib/graphLevels';
-import { labelAnchor } from '../lib/edgeLabel';
+import { placeEdgeLabels } from '../lib/edgeLabel';
 
 gsap.registerPlugin(MotionPathPlugin);
 
@@ -247,6 +247,16 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
   // Topological levels — pure function of the graph, computed during render
   // (NOT in an effect) so step badges are present on the very first paint.
   const nodeLevels = useMemo(() => computeLevels(graph), [graph]);
+  const edgeLabels = useMemo(
+    () =>
+      placeEdgeLabels(graph.edges, graph.nodes, {
+        charWidth: 5.8,
+        padding: 14,
+        minWidth: 34,
+        height: 18,
+      }),
+    [graph],
+  );
 
   // Apply transform to DOM
   useEffect(() => {
@@ -720,11 +730,21 @@ export function DiagramCanvas({ graph, theme = 'dark', reducedMotion = false }: 
                 paint over the text of an earlier edge on the live canvas. */}
             {graph.edges.map((edge) => {
               if (!edge.label) return null;
-              const mid = labelAnchor(edge.points);
+              const mid = edgeLabels.get(edge.id);
               if (!mid) return null;
-              const labelW = Math.min(140, Math.max(34, edge.label.length * 5.8 + 14));
+              const labelW = mid.width;
               return (
-                <g key={`label-${edge.id}`} data-edge-label="true">
+                <g key={`label-${edge.id}`} data-edge-label="true" data-edge-id={edge.id}>
+                  {(mid.x !== mid.anchor.x || mid.y !== mid.anchor.y) && (
+                    <line
+                      x1={mid.anchor.x}
+                      y1={mid.anchor.y}
+                      x2={mid.x}
+                      y2={mid.y}
+                      stroke={isLight ? '#CBD5E1' : '#334155'}
+                      strokeWidth="1"
+                    />
+                  )}
                   <rect
                     x={mid.x - labelW / 2}
                     y={mid.y - 9}

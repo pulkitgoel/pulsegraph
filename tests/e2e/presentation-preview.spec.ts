@@ -39,11 +39,13 @@ test('incident response keeps the complete journey in one section with a separat
   await expect(page.locator('#pulsegraph-svg [id^="path-"]')).toHaveCount(9);
   await expect(page.locator('[data-edge-label]')).toHaveCount(4);
   const bounds = await page.locator('#pulsegraph-svg').evaluate((svg) => {
-    const top = (id: string) =>
-      svg.querySelector(`#node-group-${id}`)!.getBoundingClientRect().top;
+    const center = (id: string) => {
+      const box = svg.querySelector(`[data-slide-icon="${id}"]`)!.getBoundingClientRect();
+      return box.top + box.height / 2;
+    };
     return {
-      main: ['A', 'B', 'C', 'D', 'F', 'G', 'H'].map(top),
-      branch: top('E'),
+      main: ['A', 'B', 'C', 'D', 'F', 'G', 'H'].map(center),
+      branch: center('E'),
       arrows: svg.querySelectorAll('[id^="path-"][marker-end]').length,
     };
   });

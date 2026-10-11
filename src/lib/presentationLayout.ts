@@ -2,6 +2,7 @@ import type { Graph, GraphEdge, GraphNode } from '../types';
 import type { PresentationPlan, PresentationLane } from './presentationPlan';
 import { presentationLabel } from './presentationLabel';
 import { presentationIconBox, type PresentationIconBounds } from './presentationIcon';
+import { segmentIntersectsBox } from './layoutQuality';
 
 type Point = { x: number; y: number };
 type Box = { left: number; right: number; top: number; bottom: number };
@@ -259,6 +260,10 @@ function layoutSlide(
     lane.nodeIds.forEach((id, index) => {
       const node = nodesById.get(id)!;
       const nodeHeight = presentationLabel(node.label).height;
+      const glyph = iconBounds[id] ?? { y: 18, height: 56 };
+      // Glyphs have different painted bounds. Align their visual centres on
+      // the row so a plain connection does not need a tiny vertical step.
+      const glyphAlignment = 46 - (glyph.y + glyph.height / 2);
       const branchIndex = branchIds.indexOf(id);
       const branch = compact && branchIndex >= 0;
       const columns = compact ? plan.mainPath.length : lane.nodeIds.length;
@@ -283,7 +288,12 @@ function layoutSlide(
           160 +
           spacing +
           column * ((width - 320 - spacing * 2) / Math.max(1, columns - 1)),
-        y: top + 30 + nodeHeight / 2 + (branch ? rowHeights[row] + 84 + spacing : 0),
+        y:
+          top +
+          30 +
+          nodeHeight / 2 +
+          glyphAlignment +
+          (branch ? rowHeights[row] + 84 + spacing : 0),
       });
     });
     return {
@@ -387,15 +397,66 @@ function layoutSlide(
     };
     list.sort((a, b) => coordinate(a) - coordinate(b));
   }
+  // Reserve one shared horizontal rail for the reading path. Extra branches
+  // retain their separated ports; align the spine only when every glyph has
+  // room for that rail without crowding a neighbouring attachment.
+  const mainLinks = new Set(
+    plan.mainPath.slice(1).map((id, i) => `${plan.mainPath[i]}:${id}`),
+  );
+  const mainPorts = new Map<number, { id: string; side: Side; key: string }[]>();
+  for (const edge of source.edges) {
+    const side = sides.get(edge.id)!;
+    const row = nodeRows.get(edge.from)!;
+    if (
+      !mainLinks.has(`${edge.from}:${edge.to}`) ||
+      row !== nodeRows.get(edge.to) ||
+      side.from !== 'right' ||
+      side.to !== 'left'
+    )
+      continue;
+    mainPorts.set(row, [
+      ...(mainPorts.get(row) ?? []),
+      { id: edge.from, side: side.from, key: `${edge.id}:from` },
+      { id: edge.to, side: side.to, key: `${edge.id}:to` },
+    ]);
+  }
+  const alignedMainPorts = new Map<string, number>();
+  for (const endpoints of mainPorts.values()) {
+    let low = -Infinity,
+      high = Infinity,
+      center = 0;
+    for (const endpoint of endpoints) {
+      const node = byId.get(endpoint.id)!;
+      const icon = presentationIconBox(node, iconBounds[node.id]);
+      center = (icon.top + icon.bottom) / 2;
+      low = Math.max(low, icon.top + 4);
+      high = Math.min(high, icon.bottom - 4);
+      const list = ports.get(`${node.id}:${endpoint.side}`)!;
+      const index = list.indexOf(endpoint.key);
+      const gap = Math.min(PRESENTATION_EDGE_GAP, 100 / list.length);
+      list.forEach((key, i) => {
+        if (key === endpoint.key) return;
+        const otherY = center + (i - (list.length - 1) / 2) * gap;
+        if (i < index) low = Math.max(low, otherY + PRESENTATION_EDGE_GAP);
+        else high = Math.min(high, otherY - PRESENTATION_EDGE_GAP);
+      });
+    }
+    if (low <= high) {
+      const rail = Math.max(low, Math.min(high, center));
+      endpoints.forEach(({ key }) => alignedMainPorts.set(key, rail));
+    }
+  }
   const port = (id: string, side: Side, edgeKey: string) => {
     const node = byId.get(id)!,
       box = boxOf(node);
     const list = ports.get(`${id}:${side}`)!;
-    const offset =
+    let offset =
       (list.indexOf(edgeKey) - (list.length - 1) / 2) *
       Math.min(PRESENTATION_EDGE_GAP, 100 / list.length);
     const icon = presentationIconBox(node, iconBounds[id]);
     const center = { x: (icon.left + icon.right) / 2, y: (icon.top + icon.bottom) / 2 };
+    if (side !== 'top' && alignedMainPorts.has(edgeKey))
+      offset = alignedMainPorts.get(edgeKey)! - center.y;
     const gap = 3;
     const diamond = node.type === 'gateway';
     const inset = diamond
@@ -539,6 +600,14 @@ function layoutSlide(
         p.x < width - half - 12 &&
         ![...contentBoxes, ...placed, ...headers].some((box) =>
           collides(labelBox(p), box),
+        ) &&
+        !edges.some(
+          (other) =>
+            other.id !== edge.id &&
+            other.points!.some(
+              (point, i, route) =>
+                i > 0 && segmentIntersectsBox(route[i - 1], point, labelBox(p)),
+            ),
         ),
     );
     if (location) {

@@ -4,6 +4,7 @@ import { ChatPanel } from './components/ChatPanel';
 import { DiagramCanvas } from './components/DiagramCanvas';
 import { RichDiagramCanvas } from './components/RichDiagramCanvas';
 import { PresentationCanvas } from './components/PresentationCanvas';
+import { measurePresentationIcons } from './components/presentationMeasurement';
 import { localPresentationPlan } from './lib/presentationPlan';
 import { SourceEditor } from './components/SourceEditor';
 import { LandingPage } from './components/LandingPage';
@@ -223,6 +224,8 @@ export default function App() {
     setError('');
 
     try {
+      const iconBounds = await measurePresentationIcons(standardGraph ?? diagram.graph);
+      controller.signal.throwIfAborted();
       const result = await designPresentation(
         diagram.source,
         credentials.apiKey,
@@ -230,6 +233,7 @@ export default function App() {
         credentials.model,
         setLoadingStep,
         controller.signal,
+        iconBounds,
       );
       controller.signal.throwIfAborted();
       workspace.commit(

@@ -25,12 +25,14 @@ export function createDocument(
         parsed.nodes.map((node) => node.id),
       )
     : null;
+  // All appearances must be usable before a document replaces the current one.
+  // Otherwise an imported role layout can commit and then crash when switching
+  // back to the ordinary views.
+  const standardGraph = computeLayout(parsed);
 
   return {
     source: source.trim(),
-    graph: validatedRoles
-      ? roleBlueprintLayout(parsed, validatedRoles)
-      : computeLayout(parsed),
+    graph: validatedRoles ? roleBlueprintLayout(parsed, validatedRoles) : standardGraph,
     roles: validatedRoles,
     ...(presentation
       ? { presentation: validatePresentationPlan(presentation, parsed) }

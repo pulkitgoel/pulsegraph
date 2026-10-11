@@ -11,7 +11,7 @@ import { parseMermaid } from '../src/parser/mermaidParser.ts';
 import { computeLayout, roleBlueprintLayout } from '../src/parser/layoutEngine.ts';
 import { buildBlueprintSvg } from '../src/render/blueprintSvg.ts';
 import { computeLevels, maxLevel } from '../src/lib/graphLevels.ts';
-import { labelAnchor } from '../src/lib/edgeLabel.ts';
+import { labelAnchor, placeEdgeLabels } from '../src/lib/edgeLabel.ts';
 import { DIAGRAM_EXAMPLES } from '../src/lib/examples.ts';
 import { routeCrossesNode } from '../src/lib/routeEdges.ts';
 import { RESEARCH_FLOW } from './fixtures/researchFlow.ts';
@@ -441,6 +441,54 @@ test('label anchor: near the source on routed arcs, centred on straight edges', 
   ])!;
   const distFromStart = Math.hypot(arc.x - 0, arc.y - 0);
   assert.ok(distFromStart <= 80, `label sits ${Math.round(distFromStart)}px from source`);
+});
+
+test('cache branches have straight arrow approaches and separate readable labels', () => {
+  const graph = computeLayout(
+    parseMermaid(`flowchart TB
+Customer[Customer] -->|request| APIGW[API Gateway]
+APIGW -->|auth| Auth[Auth Service]
+Auth -->|forward| API[API Service]
+API -->|read| Redis[Redis Cache]
+Redis -->|hit| Response[Response]
+Redis -->|miss| PG[PostgreSQL]
+PG -->|update| Redis
+PG -->|return| Response
+API -.->|logs| Monitoring[Monitoring Service]`),
+  );
+  for (const edge of graph.edges) {
+    const points = edge.points!;
+    assert.ok(
+      points.every(
+        (point, i) => !i || point.x === points[i - 1].x || point.y === points[i - 1].y,
+      ),
+      edge.id + ' has a tilted segment: ' + JSON.stringify(points),
+    );
+    assert.equal(routeCrossesNode(edge, graph.nodes), false, edge.id + ' crosses a node');
+  }
+  for (const style of [
+    undefined,
+    { charWidth: 5.8, padding: 14, minWidth: 34, height: 18 },
+  ]) {
+    const labels = [...placeEdgeLabels(graph.edges, graph.nodes, style).values()];
+    assert.equal(labels.length, 9);
+    labels.forEach((label, index) => {
+      for (const other of labels.slice(index + 1)) {
+        assert.ok(
+          Math.abs(label.x - other.x) >= (label.width + other.width) / 2 ||
+            Math.abs(label.y - other.y) >= (label.height + other.height) / 2,
+          'edge labels overlap: ' + JSON.stringify([label, other]),
+        );
+      }
+      for (const node of graph.nodes) {
+        assert.ok(
+          Math.abs(label.x - node.x!) >= (label.width + node.width) / 2 ||
+            Math.abs(label.y - node.y!) >= (label.height + node.height) / 2,
+          'edge label obscures ' + node.label,
+        );
+      }
+    });
+  }
 });
 
 test('blueprint SVG: edge labels (yes/no/blocked) are rendered', () => {

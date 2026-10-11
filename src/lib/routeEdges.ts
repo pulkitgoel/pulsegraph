@@ -241,10 +241,20 @@ export function separateNodePorts(edges: GraphEdge[], nodes: GraphNode[]): Graph
   const offsets = new Map<string, { side: PortSide; value: number }>();
   groups.forEach((uses) => {
     if (uses.length < 2) return;
+    const node = nodes.find(
+      (candidate) =>
+        candidate.id ===
+        (uses[0].end === 'source'
+          ? edges[uses[0].edgeIndex].from
+          : edges[uses[0].edgeIndex].to),
+    );
+    const span =
+      uses[0].side === 'left' || uses[0].side === 'right' ? node?.height : node?.width;
+    const spacing = Math.min(24, (span ?? 130) / (uses.length + 1));
     uses.forEach((use, index) => {
       offsets.set(`${use.edgeIndex}:${use.end}`, {
         side: use.side,
-        value: (index - (uses.length - 1) / 2) * 10,
+        value: (index - (uses.length - 1) / 2) * spacing,
       });
     });
   });
@@ -267,6 +277,20 @@ export function separateNodePorts(edges: GraphEdge[], nodes: GraphNode[]): Graph
     if (target) {
       shift(points[points.length - 1], target);
       if (points.length > 2) shift(points[points.length - 2], target);
+    }
+
+    // Aligned boxes use one straight lane for the whole connector. Combining
+    // its endpoint offsets avoids a tiny zigzag at a shared Dagre midpoint.
+    if (original.every((point) => point.x === original[0].x)) {
+      const lane = (points[0].x + points.at(-1)!.x) / 2;
+      points.forEach((point) => {
+        point.x = lane;
+      });
+    } else if (original.every((point) => point.y === original[0].y)) {
+      const lane = (points[0].y + points.at(-1)!.y) / 2;
+      points.forEach((point) => {
+        point.y = lane;
+      });
     }
 
     if (points.length === 2 && (source || target)) {
@@ -292,7 +316,29 @@ export function separateNodePorts(edges: GraphEdge[], nodes: GraphNode[]): Graph
         return routeCrossesNode(candidate, nodes) ? edge : candidate;
       }
     }
-    const candidate = { ...edge, points };
+    // Opposite port offsets can both write the same middle vertex on a
+    // three-point route. Add an elbow instead of tilting the approach.
+    const orthogonal = original.every(
+      (point, i) => !i || point.x === original[i - 1].x || point.y === original[i - 1].y,
+    );
+    const adjusted = orthogonal
+      ? points.flatMap((point, i) => {
+          if (!i) return [point];
+          const previous = points[i - 1];
+          if (point.x === previous.x || point.y === previous.y) return [point];
+          const originalHorizontal = original[i].y === original[i - 1].y;
+          const elbow =
+            i === points.length - 1
+              ? originalHorizontal
+                ? { x: previous.x, y: point.y }
+                : { x: point.x, y: previous.y }
+              : originalHorizontal
+                ? { x: point.x, y: previous.y }
+                : { x: previous.x, y: point.y };
+          return [elbow, point];
+        })
+      : points;
+    const candidate = { ...edge, points: adjusted };
     return routeCrossesNode(candidate, nodes) ? edge : candidate;
   });
 }
@@ -377,7 +423,11 @@ export function routeGroupBypasses(
  * All grid connections are checked, including the exit and entry channels.
  * If no route exists, fail explicitly rather than draw through another node.
  */
-export function repairRoutes(edges: GraphEdge[], nodes: GraphNode[]): GraphEdge[] {
+export function repairRoutes(
+  edges: GraphEdge[],
+  nodes: GraphNode[],
+  options: { orthogonal?: boolean; vertical?: boolean } = {},
+): GraphEdge[] {
   const boxes = boxesFor(nodes);
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const pairs = new Map<string, number>();
@@ -389,7 +439,17 @@ export function repairRoutes(edges: GraphEdge[], nodes: GraphNode[]): GraphEdge[
     const pair = edge.from + ':' + edge.to;
     const parallel = pairs.get(pair) ?? 0;
     pairs.set(pair, parallel + 1);
-    if (source !== target && !parallel && !routeCrossesNode(edge, nodes)) return edge;
+    const diagonal = (edge.points ?? []).some(
+      (point, index, points) =>
+        index > 0 && point.x !== points[index - 1].x && point.y !== points[index - 1].y,
+    );
+    if (
+      source !== target &&
+      !parallel &&
+      !routeCrossesNode(edge, nodes) &&
+      !(options.orthogonal && diagonal)
+    )
+      return edge;
 
     const gap = 12 + parallel * 8;
     const obstacles = boxes;
@@ -411,7 +471,16 @@ export function repairRoutes(edges: GraphEdge[], nodes: GraphNode[]): GraphEdge[
       return { boundary, outside };
     };
 
-    for (const side of [parallel ? 1 : 0, 3, 2, 1]) {
+    const preferredSide = options.orthogonal
+      ? options.vertical
+        ? target.y! >= source.y!
+          ? 1
+          : 3
+        : target.x! >= source.x!
+          ? 0
+          : 2
+      : 0;
+    for (const side of [...new Set([parallel ? 1 : preferredSide, 0, 3, 2, 1])]) {
       const start = port(source, side);
       const end = port(target, source === target ? (side + 1) % 4 : (side + 2) % 4);
       if (

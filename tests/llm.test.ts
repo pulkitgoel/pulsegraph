@@ -9,6 +9,11 @@ import {
   LIVE_RESEARCH_DUPLICATE_PLAN,
 } from './fixtures/liveAiResearch';
 import { RESEARCH_ROLES, RESEARCH_PRESENTATION } from './fixtures/researchPresentation';
+import {
+  PRODUCTION_FLOW,
+  PRODUCTION_ROLES,
+  PRODUCTION_PRESENTATION,
+} from './fixtures/productionPresentation';
 
 const SOURCE = 'flowchart LR\nA[Client] --> B[API]';
 function completion(content: unknown, finishReason = 'stop'): Response {
@@ -18,6 +23,100 @@ function completion(content: unknown, finishReason = 'stop'): Response {
     ],
   });
 }
+
+test('a structurally valid AI plan with an unreadable route label is rejected locally', async () => {
+  const source = `flowchart LR\nA[Client] -->|${'very long label '.repeat(60)}| B[API]`;
+  const fetchMock = mock.method(globalThis, 'fetch', async () =>
+    completion({
+      roles: { A: 'lead-in', B: 'pipeline' },
+      presentation: {
+        title: 'Request',
+        mainPath: ['A', 'B'],
+        lanes: [{ title: 'Request', kind: 'journey', nodeIds: ['A', 'B'] }],
+      },
+    }),
+  );
+  try {
+    await assert.rejects(
+      designPresentation(source, 'test-key', 'deepseek'),
+      /current diagram has been kept/,
+    );
+    assert.equal(fetchMock.mock.callCount(), 1);
+  } finally {
+    fetchMock.mock.restore();
+  }
+});
+
+test('one AI request compares checked arrangements and preserves all source content', async () => {
+  const cleaner = structuredClone(PRODUCTION_PRESENTATION);
+  cleaner.lanes[1].nodeIds = ['CACHE', 'AUTH', 'OBS', 'DB'];
+  const fetchMock = mock.method(globalThis, 'fetch', async () =>
+    completion({
+      roles: PRODUCTION_ROLES,
+      presentation: PRODUCTION_PRESENTATION,
+      alternatives: [cleaner],
+    }),
+  );
+  try {
+    const result = await designPresentation(PRODUCTION_FLOW, 'test-key', 'deepseek');
+    assert.deepEqual(result.presentation, cleaner);
+    assert.equal(result.mermaidSource, PRODUCTION_FLOW);
+    assert.deepEqual(result.graph, parseDiagram(PRODUCTION_FLOW));
+    assert.equal(fetchMock.mock.callCount(), 1);
+  } finally {
+    fetchMock.mock.restore();
+  }
+});
+
+test('an invalid AI choice can be skipped, but all invalid choices reject before commit', async () => {
+  const bad = { ...PRODUCTION_PRESENTATION, mainPath: ['U', 'DB'] };
+  for (const alternatives of [[PRODUCTION_PRESENTATION], [bad]]) {
+    const fetchMock = mock.method(globalThis, 'fetch', async () =>
+      completion({ roles: PRODUCTION_ROLES, presentation: bad, alternatives }),
+    );
+    try {
+      if (alternatives[0] === bad)
+        await assert.rejects(
+          designPresentation(PRODUCTION_FLOW, 'test-key', 'deepseek'),
+          /current diagram has been kept/,
+        );
+      else
+        assert.deepEqual(
+          (await designPresentation(PRODUCTION_FLOW, 'test-key', 'deepseek'))
+            .presentation,
+          PRODUCTION_PRESENTATION,
+        );
+      assert.equal(fetchMock.mock.callCount(), 1);
+    } finally {
+      fetchMock.mock.restore();
+    }
+  }
+});
+
+test('AI alternatives cannot replace the reading path or invent semantic sections', async () => {
+  const shortcut = { ...PRODUCTION_PRESENTATION, mainPath: ['U'] };
+  const regrouped = {
+    ...PRODUCTION_PRESENTATION,
+    lanes: [
+      { title: 'Everything', kind: 'journey', nodeIds: Object.keys(PRODUCTION_ROLES) },
+    ],
+  };
+  const fetchMock = mock.method(globalThis, 'fetch', async () =>
+    completion({
+      roles: PRODUCTION_ROLES,
+      presentation: PRODUCTION_PRESENTATION,
+      alternatives: [shortcut, regrouped],
+    }),
+  );
+  try {
+    assert.deepEqual(
+      (await designPresentation(PRODUCTION_FLOW, 'test-key', 'deepseek')).presentation,
+      PRODUCTION_PRESENTATION,
+    );
+  } finally {
+    fetchMock.mock.restore();
+  }
+});
 
 test('composition service accepts the safely normalized live AI regression', async () => {
   const graph = parseDiagram(LIVE_RESEARCH_FLOW);

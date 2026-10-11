@@ -21,7 +21,8 @@ export const GENERATE_DIAGRAM_PROMPT = [
 
 export const PRESENTATION_ROLES_PROMPT = [
   'Understand the supplied diagram and compose a readable landscape architecture slide.',
-  'Return only JSON: {"roles":{"nodeId":"pipeline"},"presentation":{"title":"How one request flows","mainPath":["nodeId"],"lanes":[{"title":"Request journey","kind":"journey","nodeIds":["nodeId"]}]}}.',
+  'Return only JSON: {"roles":{"nodeId":"pipeline"},"presentation":{"title":"How one request flows","mainPath":["nodeId"],"lanes":[{"title":"Request journey","kind":"journey","nodeIds":["nodeId"]}]},"alternatives":[]}.',
+  'For a branched or grouped diagram, supply up to two alternative presentation objects in alternatives, with the SAME mainPath and semantic sections but different node orders or section orders that may simplify routing. For a simple journey leave alternatives empty. A local geometry check will choose a readable arrangement.',
   'The mainPath must be a simple directed path using actual supplied edges; it is a reading guide, not an execution claim.',
   'Each mainPath ID must occur only once. Stop before a retry, polling return or other edge would revisit a node; those edges remain in the source diagram, not in mainPath.',
   'Every node must appear exactly once across lanes. Keep explicit source groups together in one lane, including their descendants.',

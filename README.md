@@ -34,6 +34,11 @@ Connect DeepSeek or local Ollama when you want to describe changes in plain Engl
 - Routing separates coincident orthogonal segments and node entry ports. Local
   subgraph retries and right-side shortcuts around a top-down subgraph use
   separate lanes, with room for the final arrow approach where a clear route exists.
+- Ordinary layouts compare up to three spacing choices using an independent geometry
+  audit. Clear labels and routes take priority over tiny steps, bends and canvas size.
+  Long edge labels get first choice of clear space, with leader lines when needed.
+  A layout with unresolved node or label collisions is rejected before replacing
+  the current document.
 
 These behaviors are checked on the browser canvas, not only on exported files.
 Dense graphs can still need simplification; this is not a guarantee of a
@@ -102,6 +107,12 @@ The architecture preview is an initial prototype alongside the previous layout.
 AI proposes section names, membership and reading order—not replacement nodes,
 connections or coordinates. Validation preserves every source node and edge, keeps
 source subgraphs together, and checks that the main journey follows real connections.
+For branched or grouped flows, the same AI request can propose up to two alternative
+arrangements. The app measures the actual icons and checks each arrangement locally
+before committing the best usable choice. Alternatives must keep the same main journey
+and section membership; only their ordering can change. Invalid choices are discarded,
+and a failed composition keeps the current diagram and history. These checks verify
+the supplied topology and geometry, not the correctness of your business rules.
 Live AI responses can repeat a closing return node or duplicate source-group members
 in a broad journey and their dedicated group section. These unambiguous metadata
 duplicates are normalized before strict validation. Missing/unknown nodes, invented

@@ -1,10 +1,9 @@
 import type { ChatMessage, Graph, LlmProvider, OllamaModel } from '../types';
 import { looksLikeMermaid } from '../parser/mermaidParser';
 import { validateRoles } from '../lib/roles';
-import {
-  validateAiPresentationPlan,
-  type PresentationPlan,
-} from '../lib/presentationPlan';
+import { type PresentationPlan } from '../lib/presentationPlan';
+import { selectPresentation } from '../lib/presentationSelection';
+import type { PresentationIconBounds } from '../lib/presentationIcon';
 import { requestCompletion } from './llmClient';
 import { GENERATE_DIAGRAM_PROMPT, PRESENTATION_ROLES_PROMPT } from './llmPrompts';
 import { parseDiagram } from './llmValidation';
@@ -134,6 +133,7 @@ export async function designPresentation(
   ollamaModel: OllamaModel = 'gemma3:4b',
   onStep?: ProgressCallback,
   signal?: AbortSignal,
+  iconBounds?: Record<string, PresentationIconBounds>,
 ): Promise<SendMessageResult> {
   const graph = parseDiagram(currentMermaid);
   onStep?.('generating');
@@ -168,10 +168,28 @@ export async function designPresentation(
     response.roles,
     graph.nodes.map((node) => node.id),
   );
+  onStep?.('validating');
+  if (
+    response.alternatives != null &&
+    (!Array.isArray(response.alternatives) ||
+      response.alternatives.length > 2 ||
+      response.presentation == null)
+  ) {
+    throw new Error(
+      'The AI returned invalid presentation choices. Your current diagram has been kept.',
+    );
+  }
   const presentation =
     response.presentation == null
       ? undefined
-      : validateAiPresentationPlan(response.presentation, graph);
+      : selectPresentation(
+          graph,
+          [
+            response.presentation,
+            ...(Array.isArray(response.alternatives) ? response.alternatives : []),
+          ],
+          iconBounds,
+        );
   onStep?.('rendering');
 
   return {

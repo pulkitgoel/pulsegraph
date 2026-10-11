@@ -4,3 +4,5 @@ test-results
 playwright-report
 package-lock.json
 gbrain-architecture-study.md
+brag-output*/
+.tmp/

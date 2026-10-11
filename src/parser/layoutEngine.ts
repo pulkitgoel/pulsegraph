@@ -7,6 +7,8 @@ import {
 import { computeLevels, findBackEdgeIds } from '../lib/graphLevels.ts';
 import { roleOf as resolveRole } from '../lib/roles.ts';
 import { presentationProfile } from '../lib/presentationProfile.ts';
+import { placeEdgeLabels } from '../lib/edgeLabel.ts';
+import { compareLayoutQuality, inspectLayout } from '../lib/layoutQuality.ts';
 import dagre from '@dagrejs/dagre';
 import type { Graph, GraphNode, GraphEdge, GraphGroup } from '../types';
 
@@ -71,6 +73,30 @@ export function getNodeDimensions(label: string): { width: number; height: numbe
 }
 
 export function computeLayout(graph: Graph): Graph {
+  let best = computeLayoutCandidate(graph);
+  let quality = inspectLayout(best);
+  // A single straight journey needs no search. Branches and labelled routes
+  // benefit from bounded alternatives, without changing the source direction.
+  if (quality.cost.slice(0, 4).some((cost) => cost > 0)) {
+    for (const spacing of [24, 48]) {
+      const candidate = computeLayoutCandidate(graph, spacing);
+      const candidateQuality = inspectLayout(candidate);
+      if (compareLayoutQuality(candidateQuality, quality) < 0) {
+        best = candidate;
+        quality = candidateQuality;
+      }
+    }
+  }
+  if (quality.cost[0] > 0) {
+    throw new Error(
+      'This diagram needs more space for clear connections and labels. Simplify a dense section or shorten its labels. Your previous diagram has been kept.',
+    );
+  }
+  return best;
+}
+
+/** Fixed placement candidate, also used by regression comparisons. */
+export function computeLayoutCandidate(graph: Graph, spacing = 0): Graph {
   // Enable compound graph for subgraphs/clusters; multigraph so parallel
   // edges (A→B twice with different labels) keep separate geometry instead of
   // silently overwriting each other.
@@ -84,8 +110,8 @@ export function computeLayout(graph: Graph): Graph {
     marginy: 40,
     // Tighter spacing keeps diagrams compact so text stays a larger fraction of
     // the exported image (more readable when the image is fit into a window/slide).
-    nodesep: isVertical ? 38 : 42,
-    ranksep: isVertical ? 70 : 60,
+    nodesep: (isVertical ? 38 : 42) + spacing,
+    ranksep: (isVertical ? 70 : 60) + spacing,
     edgesep: 20,
     // Align nodes to a consistent up-left grid so the layout looks symmetric
     // rather than scattered.
@@ -283,10 +309,18 @@ export function computeLayout(graph: Graph): Graph {
   });
 
   // Dagre optimizes rank placement, but its splines can still cross unrelated
-  // nodes in dense or cyclic graphs. Convert only blocked routes to verified
-  // rectilinear paths before coordinates are normalized.
+  // nodes in dense or cyclic graphs. Repair blocked paths and straighten
+  // ordinary branch approaches before coordinates are normalized.
   positionedEdges = separateSharedSegments(
-    separateNodePorts(repairRoutes(positionedEdges, positionedNodes), positionedNodes),
+    separateNodePorts(
+      repairRoutes(positionedEdges, positionedNodes, {
+        // Compound layouts already reserve subgraph corridors and bypass lanes.
+        // Preserve those routes; normalize ordinary Dagre branches here.
+        orthogonal: !graph.groups?.length,
+        vertical: isVertical,
+      }),
+      positionedNodes,
+    ),
     positionedNodes,
   );
   positionedEdges = routeGroupBypasses(
@@ -365,6 +399,10 @@ export function getGraphDimensions(graph: Graph): { width: number; height: numbe
       maxY = Math.max(maxY, p.y);
     });
   });
+  for (const label of placeEdgeLabels(graph.edges, graph.nodes).values()) {
+    maxX = Math.max(maxX, label.x + label.width / 2);
+    maxY = Math.max(maxY, label.y + label.height / 2);
+  }
   // Content is normalized to start at 40px; add matching 40px on the far side
   // so padding is symmetric and there is no wasted empty band.
   return {

@@ -13,7 +13,7 @@ import { MotionPathPlugin } from 'gsap/MotionPathPlugin';
 import type { Graph, NodeType } from '../types';
 import { getGraphDimensions } from '../parser/layoutEngine';
 import { computeLevels } from '../lib/graphLevels';
-import { labelAnchor } from '../lib/edgeLabel';
+import { placeEdgeLabels } from '../lib/edgeLabel';
 
 gsap.registerPlugin(MotionPathPlugin);
 
@@ -1026,6 +1026,7 @@ export function RichDiagramCanvas({
   // Topological levels — pure function of the graph, computed during render
   // (NOT in an effect) so step badges are present on the very first paint.
   const nodeLevels = useMemo(() => computeLevels(graph), [graph]);
+  const edgeLabels = useMemo(() => placeEdgeLabels(graph.edges, graph.nodes), [graph]);
 
   // --- Flow-based Dynamic Color-Coding ---
   // 1. Calculate in-degrees and build adjacency list
@@ -1805,14 +1806,24 @@ export function RichDiagramCanvas({
                 true SVG overlay for the live canvas, not an export-only fix. */}
             {graph.edges.map((edge) => {
               if (!edge.label) return null;
-              const mid = labelAnchor(edge.points);
+              const mid = edgeLabels.get(edge.id);
               if (!mid) return null;
-              const labelW = Math.min(150, Math.max(36, edge.label.length * 6.2 + 16));
+              const labelW = mid.width;
               const edgeBg = theme === 'light' ? '#FFFFFF' : '#0B1120';
               const edgeStroke = theme === 'light' ? '#CBD5E1' : '#334155';
               const edgeText = theme === 'light' ? '#334155' : '#CBD5E1';
               return (
-                <g key={`label-${edge.id}`} data-edge-label="true">
+                <g key={`label-${edge.id}`} data-edge-label="true" data-edge-id={edge.id}>
+                  {(mid.x !== mid.anchor.x || mid.y !== mid.anchor.y) && (
+                    <line
+                      x1={mid.anchor.x}
+                      y1={mid.anchor.y}
+                      x2={mid.x}
+                      y2={mid.y}
+                      stroke={edgeStroke}
+                      strokeWidth="1"
+                    />
+                  )}
                   <rect
                     x={mid.x - labelW / 2}
                     y={mid.y - 12}

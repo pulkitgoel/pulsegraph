@@ -38,6 +38,49 @@ import {
   INCIDENT_ROLES,
 } from './fixtures/incidentPresentation';
 
+test('checkout presentation keeps the main journey straight across different glyph bounds', () => {
+  const graph = parseDiagram(`flowchart LR
+Customer[Customer] --> Checkout[Checkout]
+Checkout --> Decision{Payment approved?}
+Decision -->|Yes| Order[Order service]
+Order --> Receipt[Receipt email]
+Decision -->|No| Retry[Retry payment]`);
+  const mainPath = ['Customer', 'Checkout', 'Decision', 'Order', 'Receipt'];
+  const bounds = Object.fromEntries(
+    graph.nodes.map((node, i) => [
+      node.id,
+      { x: 50, y: 18 + (i % 3) * 4, width: 56, height: 56 - (i % 3) * 8 },
+    ]),
+  );
+  const scene = presentationLayout(
+    graph,
+    {
+      title: 'Checkout',
+      mainPath,
+      lanes: [
+        { title: 'Checkout', kind: 'journey', nodeIds: graph.nodes.map((n) => n.id) },
+      ],
+    },
+    bounds,
+  );
+  const spine = scene.graph.edges.filter((edge) => edge.to !== 'Retry');
+  const rail = spine[0].points![0].y;
+  for (const edge of spine) {
+    assert.ok(
+      edge.points!.every((point) => point.y === rail),
+      `${edge.id} has a needless step`,
+    );
+  }
+  assert.equal(scene.graph.edges.length, 5);
+  assert.deepEqual(
+    Object.keys(scene.labels).sort(),
+    graph.edges
+      .filter((edge) => edge.label)
+      .map((edge) => edge.id)
+      .sort(),
+  );
+});
+
 test('slide attachments use glyph bounds rather than the label bottom', () => {
   for (const { source, plan } of [
     { source: INCIDENT_FLOW, plan: INCIDENT_PRESENTATION },

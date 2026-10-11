@@ -13,6 +13,7 @@ import {
   pulseTravelWindow,
 } from '../lib/pulseTravel';
 import { RichNodeIcon } from './RichDiagramCanvas';
+import { readPresentationIconBounds } from './presentationMeasurement';
 import './PresentationCanvas.css';
 
 gsap.registerPlugin(MotionPathPlugin);
@@ -43,16 +44,7 @@ export function PresentationCanvas({
   const measureIcons = useCallback(
     (svg: SVGSVGElement | null) => {
       if (!svg) return;
-      const bounds: Record<string, PresentationIconBounds> = {};
-      svg.querySelectorAll<SVGGElement>('[data-icon-measure]').forEach((icon) => {
-        const box = icon.getBBox();
-        bounds[icon.getAttribute('data-icon-measure')!] = {
-          x: PRESENTATION_ICON.x + box.x * PRESENTATION_ICON.scale,
-          y: PRESENTATION_ICON.y + box.y * PRESENTATION_ICON.scale,
-          width: box.width * PRESENTATION_ICON.scale,
-          height: box.height * PRESENTATION_ICON.scale,
-        };
-      });
+      const bounds = readPresentationIconBounds(svg);
       setMeasured({ graph, bounds });
     },
     [graph],
